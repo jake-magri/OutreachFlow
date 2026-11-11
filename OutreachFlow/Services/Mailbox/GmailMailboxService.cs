@@ -295,6 +295,102 @@ public sealed class GmailMailboxService(IConfiguration config, IHttpClientFactor
     /// recipient with a recorded REAL outbound email. Never modifies Gmail labels.
     /// Returned previews live in the user's interactive session, not in SQLite.
     /// </summary>
+    /// <summary>
+    /// Owner-confirmed import of a single Gmail message. Freshly refetches the source,
+    /// revalidates its exact sender and business relationship, then records an actual
+    /// reply and audited provider ID in one database transaction. NEVER sends email.
+    /// </summary>
+    public async Task<bool> ImportReviewedInboundAsync(int workspaceId, int prospectId,
+        string messageId, ReplyCategory category,
+        IDbContextFactory<OutreachDbContext> factory, CancellationToken ct = default)
+    {
+        if (messageId.Length is < 1 or > 100 || !messageId.All(c =>
+                char.IsAsciiLetterOrDigit(c) || c is '-' or '_'))
+            throw new InvalidOperationException("Invalid Gmail message identifier.");
+        if (!Enum.IsDefined(category))
+            throw new InvalidOperationException("Invalid reply classification.");
+        var connection = await store.LoadAsync(workspaceId, ct) ??
+            throw new InvalidOperationException("Connect Gmail before importing replies.");
+        await using var db = await factory.CreateDbContextAsync(ct);
+        var workspace = await db.Workspaces.AsNoTracking()
+            .SingleAsync(w => w.Id == workspaceId, ct);
+        if (!connection.Email.Equals(workspace.SenderEmail, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("The connected mailbox no longer matches the workspace sender.");
+        var prospect = await db.Prospects.SingleOrDefaultAsync(p =>
+            p.WorkspaceId == workspaceId && p.Id == prospectId, ct);
+        if (prospect is null || prospect.Attempts < 1 ||
+            prospect.Status is ProspectStatus.Suppressed or ProspectStatus.Closed ||
+            string.IsNullOrWhiteSpace(prospect.ContactEmail))
+            throw new InvalidOperationException("An open, previously contacted prospect is required.");
+        var firstSent = await db.Messages.AsNoTracking()
+            .Where(m => m.ProspectId == prospectId && m.Direction == "Outbound" && !m.IsSimulation)
+            .OrderBy(m => m.OccurredUtc).Select(m => (DateTime?)m.OccurredUtc)
+            .FirstOrDefaultAsync(ct);
+        if (firstSent is null)
+            throw new InvalidOperationException("Record a real outgoing email before importing a reply.");
+
+        var marker = "gmail:" + messageId;
+        if (await db.Activities.AsNoTracking().AnyAsync(a =>
+            a.ProspectId == prospectId && a.Kind == "Gmail inbound imported" &&
+            a.Detail == marker, ct))
+            return false;
+
+        var token = await TokenAsync(connection, ct);
+        using var source = await GetAsync("messages/" + Uri.EscapeDataString(messageId) +
+            "?format=full", token, ct);
+        if (!source.RootElement.TryGetProperty("labelIds", out var labels) ||
+            labels.ValueKind != JsonValueKind.Array ||
+            !labels.EnumerateArray().Any(l => l.GetString() == "INBOX"))
+            throw new InvalidOperationException("Selected Gmail message is not currently in the inbox.");
+        var item = ParseInbound(messageId, source.RootElement, prospect.Id,
+            prospect.CompanyName, prospect.ContactEmail) ??
+            throw new InvalidOperationException("Sender does not match the recorded recipient.");
+        if (item.ReceivedUtc < firstSent.Value.AddMinutes(-5))
+            throw new InvalidOperationException("This message predates the recorded outgoing inquiry.");
+        if (string.IsNullOrWhiteSpace(item.Body))
+            throw new InvalidOperationException("No readable message text was found; review in Gmail manually.");
+
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        // Recheck the duplicate marker after acquiring the write transaction.
+        if (await db.Activities.AnyAsync(a => a.ProspectId == prospectId &&
+            a.Kind == "Gmail inbound imported" && a.Detail == marker, ct))
+            return false;
+
+        db.Messages.Add(new OutreachMessage
+        {
+            ProspectId = prospectId, Direction = "Inbound",
+            Classification = "Gmail reviewed: " + category,
+            Subject = item.Subject, Body = item.Body,
+            IsSimulation = false, OccurredUtc = item.ReceivedUtc
+        });
+        db.Activities.Add(new ActivityEntry
+        {
+            ProspectId = prospectId, Kind = "Gmail inbound imported",
+            Detail = marker, OccurredUtc = DateTime.UtcNow
+        });
+        prospect.Status = category switch
+        {
+            ReplyCategory.Interested => ProspectStatus.WarmLead,
+            ReplyCategory.ApplicationInstructions => ProspectStatus.ApplicationTask,
+            ReplyCategory.Declined => ProspectStatus.Suppressed,
+            _ => ProspectStatus.NeedsAction
+        };
+        prospect.AutomationPaused = true;
+        prospect.NextStepDueUtc = null;
+        prospect.NextAction = category switch
+        {
+            ReplyCategory.Interested => "Personally follow up with interested contact",
+            ReplyCategory.ApplicationInstructions => "Complete official supplier application",
+            ReplyCategory.Declined => "",
+            _ => "Review Gmail reply and decide next step"
+        };
+        prospect.NextActionDate = null;
+        prospect.UpdatedUtc = DateTime.UtcNow;
+        await db.SaveChangesAsync(ct);
+        await tx.CommitAsync(ct);
+        return true;
+    }
+
     public async Task<IReadOnlyList<GmailInboxItem>> ReviewInboxAsync(int workspaceId,
         IDbContextFactory<OutreachDbContext> factory, CancellationToken ct = default)
     {
@@ -326,7 +422,8 @@ public sealed class GmailMailboxService(IConfiguration config, IHttpClientFactor
         if (!list.RootElement.TryGetProperty("messages", out var messages) ||
             messages.ValueKind != JsonValueKind.Array) return [];
         var seen = await db.Activities.AsNoTracking()
-            .Where(a => a.Kind == "Gmail inbound imported")
+            .Where(a => a.Kind == "Gmail inbound imported" &&
+                eligibleIds.Contains(a.ProspectId))
             .Select(a => a.Detail).ToListAsync(ct);
         var processed = seen.ToHashSet(StringComparer.Ordinal);
         var found = new List<GmailInboxItem>();
