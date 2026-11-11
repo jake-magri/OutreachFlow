@@ -58,7 +58,7 @@ try
     page.SetDefaultNavigationTimeout(20000);
 
     await Scenario("authentication", async () => {
-        await page.GotoAsync(url + "/");
+        await page.GotoAsync(url + "/account/setup");
         await Visible(page.GetByRole(AriaRole.Heading, new() { Name = "Set up your owner account" }));
         await page.Locator("input[name=email]").FillAsync("browser-owner@example.org");
         await page.Locator("input[name=password]").FillAsync("BrowserOnlyPassword1234!");
