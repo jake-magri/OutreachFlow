@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using System.Net;
 using OutreachFlow.Services.Research;
+using OutreachFlow.Services.Discovery;
 using OutreachFlow.Data;
 using OutreachFlow.Models;
 using OutreachFlow.Services;
@@ -41,6 +42,52 @@ if (Environment.GetEnvironmentVariable("OUTREACHFLOW_LIVE_CITY_PROBE") == "1")
             ex.GetType().Name + "; " + ex.Message[..Math.Min(ex.Message.Length, 180)]);
     }
 }
+
+// Deterministic search does not require an LLM or live provider calls.
+var queriesForFleet = DeterministicQueryPlanner.Plan(ResearchProfileCatalog.Preset("fleet"), "Charlotte NC");
+var queriesForJobs = DeterministicQueryPlanner.Plan(ResearchProfileCatalog.Preset("junior-dev"), "Charlotte NC");
+Check(queriesForFleet.Count == 2 &&
+      queriesForFleet.All(q => q.Contains("Charlotte NC", StringComparison.Ordinal)) &&
+      queriesForJobs.Any(q => q.Contains("junior developer", StringComparison.OrdinalIgnoreCase)) &&
+      !queriesForFleet.SequenceEqual(queriesForJobs),
+    "workspace profiles produce distinct bounded search query plans");
+var candidateRank = OpportunityRanker.Rank(new[]
+{
+    ("fleet washing vendor", new SearchListing("Fleet washing vendor registration",
+        "https://city.example.org/Suppliers#top", "Register as a fleet washing vendor")),
+    ("vendor registration", new SearchListing("Duplicate listing",
+        "https://city.example.org/Suppliers#other", "Register as a vendor")),
+    ("irrelevant", new SearchListing("Privacy policy",
+        "https://city.example.org/privacy", "privacy policy")),
+    ("malicious", new SearchListing("Internal network", "http://127.0.0.1/private", "supplier")),
+    ("malicious", new SearchListing("Script destination", "javascript:alert(1)", "supplier"))
+}, ResearchProfileCatalog.Preset("fleet"));
+Check(candidateRank.Count == 1 &&
+      candidateRank[0].Url == "https://city.example.org/Suppliers" &&
+      candidateRank[0].RelevanceScore > 0 &&
+      candidateRank[0].SourceTier.Contains("unverified", StringComparison.OrdinalIgnoreCase),
+    "indexed candidates are deduplicated, validated, scored and labeled unverified");
+var tavilySample = TavilySearchProvider.ParseResults(
+    """{"results":[{"title":"City supplier registration","url":"https://city.example.org/suppliers","content":"Public index summary"},{"title":"No URL"}]}""");
+Check(tavilySample.Count == 1 &&
+      tavilySample[0].Title == "City supplier registration" &&
+      tavilySample[0].Summary == "Public index summary",
+    "Tavily adapter maps structured search response without LLM fields");
+await MustReject(() => Task.Run(() => TavilySearchProvider.ParseResults("{}")),
+    "Tavily adapter fails on unexpected response shape");
+var usageDir = Path.Combine(Path.GetTempPath(), "outreachflow-search-budget-" + Guid.NewGuid().ToString("N"));
+try
+{
+    var usage = new LocalSearchUsageBudget(usageDir, 3);
+    var claims = await Task.WhenAll(Enumerable.Range(0, 3).Select(_ => usage.ReserveAsync()));
+    Check(claims.Select(x => x.Used).Order().SequenceEqual(new[] { 1, 2, 3 }) &&
+          (await new LocalSearchUsageBudget(usageDir, 3).GetAsync()).Remaining == 0,
+        "budget reservations are concurrency-safe and durable across instances");
+    await MustReject(async () => { await usage.ReserveAsync(); }, "exhausted budget rejects additional requests");
+    await File.WriteAllTextAsync(Path.Combine(usageDir, "search-requests.json"), "{ invalid");
+    await MustReject(async () => { await usage.GetAsync(); }, "corrupt usage ledger fails closed");
+}
+finally { if (Directory.Exists(usageDir)) Directory.Delete(usageDir, recursive: true); }
 
 // Browser-render path is explicitly opt-in and must never follow unsafe destinations.
 var browserRoot = new Uri("https://www.example.org/");
@@ -235,6 +282,35 @@ try
     Check(contacts.Select(c => c.Address).Order().SequenceEqual(
         new[] { "procurement@public.example", "vendors@public.example" }.Order()),
         "public HTML contact extraction includes mailto and visible addresses, excludes scripts and no-reply");
+    // No network access: fake indexed results are never stored until reviewed/imported.
+    var discoveryPath = Path.Combine(Path.GetTempPath(), "outreachflow-discovery-" + Guid.NewGuid().ToString("N"));
+    try
+    {
+        var profileStoreForDiscovery = new JsonResearchProfileStore(Path.Combine(discoveryPath, "profiles"));
+        await profileStoreForDiscovery.SaveAsync(1, ResearchProfileCatalog.Preset("fleet"));
+        var fakeSearch = new FakeWebSearchProvider();
+        var discovery = new OpportunityDiscoveryService(fakeSearch,
+            new LocalSearchUsageBudget(Path.Combine(discoveryPath, "budget"), 5),
+            profileStoreForDiscovery, new FixedWorkspaceAccess(1), factory, flow);
+        var prior = (await flow.ListProspectsAsync()).Count;
+        var discovered = await discovery.DiscoverAsync();
+        Check(discovered.Candidates.Count == 1 && discovered.Queries.Count == 2 &&
+              discovered.Budget.Used == 2 && fakeSearch.Calls == 2 &&
+              (await flow.ListProspectsAsync()).Count == prior,
+            "on-demand search consumes budget but doesn't create or message prospects");
+        await MustReject(async () =>
+            { await discovery.ImportReviewedAsync(777, discovered.Candidates[0]); },
+            "discovery import refuses stale or switched workspace");
+        var imported = await discovery.ImportReviewedAsync(1, discovered.Candidates[0]);
+        var newProspect = (await flow.ListProspectsAsync()).Single(p =>
+            p.Website == "https://city.example.org/supplier-registration");
+        Check(imported.Added == 1 &&
+              newProspect.ResearchOutcome == ResearchOutcome.NotReviewed &&
+              newProspect.Status == ProspectStatus.ResearchNeeded &&
+              newProspect.Attempts == 0,
+            "owner-reviewed indexed URL imports with no verified process or outreach approval");
+    }
+    finally { if (Directory.Exists(discoveryPath)) Directory.Delete(discoveryPath, recursive: true); }
     var researchFlow = new OutreachService(factory, new DryRunEmail(), new FixedWorkspaceAccess(1), new FakeResearcher());
     await researchFlow.ImportAsync("Website Research Co | South | https://www.example.org | vendor@example.org");
     var researchId = (await researchFlow.ListProspectsAsync()).Single(p => p.CompanyName == "Website Research Co").Id;
@@ -404,4 +480,21 @@ sealed class FakeResearcher : ICompanyResearcher
             Contacts = [new ResearchContact("procurement@example.org", "https://www.example.org/contact",
                 "Publicly listed vendor email; verify ownership and relevance.")]
         });
+}
+
+sealed class FakeWebSearchProvider : IWebSearchProvider
+{
+    public string Name => "Offline fixture search";
+    public bool IsConfigured => true;
+    public int Calls { get; private set; }
+    public Task<IReadOnlyList<SearchListing>> SearchAsync(string query, int maxResults,
+        CancellationToken cancellationToken = default)
+    {
+        Calls++;
+        return Task.FromResult<IReadOnlyList<SearchListing>>([
+            new SearchListing("Fleet washing vendor registration",
+                "https://city.example.org/supplier-registration",
+                "Official vendor supplier registration information")
+        ]);
+    }
 }
