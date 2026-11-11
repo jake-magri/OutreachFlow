@@ -27,6 +27,32 @@ static async Task MustReject(Func<Task> action, string scenario)
     throw new Exception($"FAILED: {scenario}");
 }
 
+// Google identity login and Gmail authorization intentionally share a configurable
+// OAuth client but retain separate callbacks/scopes and explicit account linking.
+var googleConfig = new Microsoft.Extensions.Configuration.ConfigurationBuilder()
+    .AddInMemoryCollection(new Dictionary<string, string?>
+    {
+        ["Gmail:ClientId"] = "local-web-client",
+        ["Gmail:ClientSecret"] = "offline-fixture-secret"
+    }).Build();
+Check(GoogleSignInEndpoints.Configured(googleConfig) &&
+      GoogleSignInEndpoints.ClientId(googleConfig) == "local-web-client" &&
+      GoogleSignInEndpoints.ClientSecret(googleConfig) == "offline-fixture-secret" &&
+      !GoogleSignInEndpoints.Configured(
+          new Microsoft.Extensions.Configuration.ConfigurationBuilder().Build()),
+    "Google login reuses optional configured OAuth client but stays disabled without credentials");
+var alternateIdentityConfig = new Microsoft.Extensions.Configuration.ConfigurationBuilder()
+    .AddInMemoryCollection(new Dictionary<string, string?>
+    {
+        ["Gmail:ClientId"] = "mailbox-client",
+        ["Gmail:ClientSecret"] = "mailbox-secret",
+        ["GoogleAuth:ClientId"] = "basic-signin-client",
+        ["GoogleAuth:ClientSecret"] = "basic-signin-secret"
+    }).Build();
+Check(GoogleSignInEndpoints.ClientId(alternateIdentityConfig) == "basic-signin-client" &&
+      GoogleSignInEndpoints.ClientSecret(alternateIdentityConfig) == "basic-signin-secret",
+    "optional separate identity client takes precedence without expanding Gmail scopes");
+
 // Gmail OAuth and message parser tests run offline; no mailbox or outbound send.
 Check(GmailMailboxService.IsAllowedRedirectUri("https://localhost:7117/mailbox/google/callback") &&
       GmailMailboxService.IsAllowedRedirectUri("https://127.0.0.1:7117/mailbox/google/callback") &&
