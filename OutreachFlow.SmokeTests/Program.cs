@@ -93,6 +93,62 @@ Check(intentResults.Count == 3 &&
       intentResults.Single(x => x.Host.Contains("supplierdiversity", StringComparison.OrdinalIgnoreCase))
           .IntentCategory.Contains("guide", StringComparison.OrdinalIgnoreCase),
     "official-indexed process outranks irrelevant wholesale products and separates third-party guides");
+
+var procurementResult = intentResults.Single(x => x.Host == "eprocurement.nc.gov");
+var wholesaleResult = intentResults.Single(x => x.Host.Contains("americanstainlessandsupply", StringComparison.OrdinalIgnoreCase));
+var guideResult = intentResults.Single(x => x.Host.Contains("supplierdiversity", StringComparison.OrdinalIgnoreCase));
+Check(procurementResult.Suggestion.Step == SuggestedNextStep.ApplicationReview &&
+      wholesaleResult.Suggestion.Step == SuggestedNextStep.Deprioritize &&
+      guideResult.Suggestion.Step == SuggestedNextStep.Deprioritize &&
+      procurementResult.Suggestion.Explanation.Contains("Verify", StringComparison.OrdinalIgnoreCase) &&
+      intentResults[0].Suggestion.Step == SuggestedNextStep.ApplicationReview,
+    "indexed buyer registration is recommended for application review; product sellers and guides are deprioritized");
+
+var triageFixtures = OpportunityRanker.Rank(new[]
+{
+    ("inquiry", new SearchListing("Procurement contact",
+        "https://fleetbuyer.example.org/contact", "Fleet services vendor inquiries: contact procurement for questions")),
+    ("unknown", new SearchListing("Facilities department",
+        "https://facilities.example.org/about", "Information about local facilities operations")),
+    ("job", new SearchListing("Delivery driver jobs",
+        "https://carrier.example.org/careers", "Job openings for delivery drivers. Apply now")),
+    ("mixed", new SearchListing("Vendor registration and job openings",
+        "https://mixed.example.org/vendor", "Register as a vendor or view job openings")),
+    ("supplier", new SearchListing("Wholesale pipe supply and vendor registration",
+        "https://mixedseller.example.org/vendors", "Wholesale products and supplier registration"))
+}, ResearchProfileCatalog.Default());
+Check(triageFixtures.Single(x => x.Host == "fleetbuyer.example.org")
+          .Suggestion.Step == SuggestedNextStep.InquiryReview &&
+      triageFixtures.Single(x => x.Host == "facilities.example.org")
+          .Suggestion.Step == SuggestedNextStep.FurtherResearch &&
+      triageFixtures.Single(x => x.Host == "carrier.example.org")
+          .Suggestion.Step == SuggestedNextStep.Deprioritize &&
+      triageFixtures.Single(x => x.Host == "mixed.example.org")
+          .Suggestion.Step == SuggestedNextStep.FurtherResearch &&
+      triageFixtures.Single(x => x.Host == "mixedseller.example.org")
+          .Suggestion.Step == SuggestedNextStep.FurtherResearch,
+    "inquiry signals suggest review; unclear and mixed evidence stays conservative; irrelevant jobs rank low");
+
+var employmentTriage = OpportunityRanker.Rank(new[]
+{
+    ("jobs", new SearchListing("Junior developer job openings",
+        "https://careers.example.org/jobs", "Apply now to the junior developer opening")),
+    ("vendor", new SearchListing("Supplier registration",
+        "https://purchasing.example.org/vendors", "Register as a vendor for procurement opportunities"))
+}, ResearchProfileCatalog.Preset("junior-dev"));
+Check(employmentTriage.Single(x => x.Host == "careers.example.org")
+          .Suggestion.Step == SuggestedNextStep.ApplicationReview &&
+      employmentTriage.Single(x => x.Host == "purchasing.example.org")
+          .Suggestion.Step == SuggestedNextStep.Deprioritize &&
+      OpportunityTriage.IsEmploymentProfile(ResearchProfileCatalog.Preset("junior-dev")) &&
+      !OpportunityTriage.IsEmploymentProfile(ResearchProfileCatalog.Preset("fleet")),
+    "employment profiles recommend manual job application review, not unrelated supplier registrations");
+Check(triageFixtures.All(x => x.Suggestion.Label.Length > 0 &&
+                            x.Suggestion.Explanation.Length > 30) &&
+      triageFixtures.Any(x => x.Suggestion.Route is null) &&
+      triageFixtures.All(x => x.SourceTier.Contains("unverified", StringComparison.OrdinalIgnoreCase)),
+    "all deterministic decisions are explainable, and low-priority records are not silently imported");
+
 var sampleProcessLinks = ProcessLinkAnalyzer.Extract(
     new Uri("https://city.example.org/vendor-process"),
     "<html><body><a href='/vendors'>Vendor registration</a>" +
