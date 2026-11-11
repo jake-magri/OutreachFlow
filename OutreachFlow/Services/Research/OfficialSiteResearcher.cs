@@ -89,6 +89,8 @@ public sealed class OfficialSiteResearcher : ICompanyResearcher, IDisposable
         var pages = new List<string>();
         var candidates = new Dictionary<string, ResearchCandidate>(StringComparer.OrdinalIgnoreCase);
         var contacts = new Dictionary<string, ResearchContact>(StringComparer.OrdinalIgnoreCase);
+        var diagnostics = new List<ResearchPageDiagnostic>();
+        int skippedPages = 0;
         var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var queue = new Queue<Uri>();
         queue.Enqueue(root);
@@ -104,10 +106,23 @@ public sealed class OfficialSiteResearcher : ICompanyResearcher, IDisposable
             catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or InvalidOperationException)
             {
                 // Keep investigating remaining links; error is not evidence of no published process.
+                skippedPages++;
                 continue;
             }
-            if (page.StatusCode != HttpStatusCode.OK || !page.IsHtml) continue;
+            if (page.StatusCode != HttpStatusCode.OK || !page.IsHtml)
+            {
+                skippedPages++;
+                continue;
+            }
             pages.Add(page.Url.AbsoluteUri);
+            var diagnostic = ResearchPageInspector.Inspect(page.Url, page.Content, profile);
+            diagnostics.Add(diagnostic);
+            if (diagnostic.IsInconclusive)
+            {
+                // A challenge, script-only shell or suspiciously empty page cannot support an
+                // absence conclusion. Do not extract misleading contacts or links from it.
+                continue;
+            }
             foreach (var contact in PublicContactExtractor.Extract(page.Content, page.Url))
             {
                 if (contacts.Count >= 30) break;
@@ -144,15 +159,19 @@ public sealed class OfficialSiteResearcher : ICompanyResearcher, IDisposable
                    "Do not mark 'No process found' without additional manual checking.";
         var possibleProcess = candidates.Values.Any(x =>
             ResearchProfileRules.ContainsProcessSignal(x.Title + " " + x.Observation, profile));
-        var triage = possibleProcess
-            ? "Potential process/application reference found: verify its relevance and whether this opportunity qualifies before assigning a route."
-            : contacts.Count > 0
-                ? "Published contact candidates found, but no verified application process. Continue manual source review before inquiry eligibility."
-                : "No matching process or contact discovered in checked HTML. Review additional sources; absence is not proof.";
+        var inconclusiveCount = diagnostics.Count(x => x.IsInconclusive);
+        var triage = inconclusiveCount > 0 || skippedPages > 0
+            ? $"Research incomplete: {inconclusiveCount} HTML page(s) returned suspicious or insufficient content, and {skippedPages} page request(s) could not be evaluated. Verify manually; do not infer no process exists."
+            : possibleProcess
+                ? "Potential process/application reference found: verify its relevance and whether this opportunity qualifies before assigning a route."
+                : contacts.Count > 0
+                    ? "Published contact candidates found, but no verified application process. Continue manual source review before inquiry eligibility."
+                    : "No matching process or contact discovered in checked HTML. Review additional sources; absence is not proof.";
         return new ResearchScan(candidates.Values.Take(16).ToArray(), pages, note)
         {
             Contacts = contacts.Values.ToArray(),
-            SuggestedReview = triage
+            SuggestedReview = triage,
+            PageDiagnostics = diagnostics
         };
     }
 
