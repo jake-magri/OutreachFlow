@@ -17,7 +17,8 @@ else
             <div class="scan-box">
                 <p><strong>Company website:</strong> @p.Website</p>
                 <button class="button" @onclick="ScanWebsite" disabled="@scanning">@(scanning ? "Checking public site…" : "Research company website")</button>
-                <small>Read-only · max 6 same-site HTML pages · no logins, forms, PDFs or external portals · no email</small>
+                <button class="button" @onclick="ScanWebsiteBrowser" disabled="@scanning">@(scanning ? "Research in progress…" : "Render with browser (experimental)")</button>
+                <small>Read-only · max 6 same-site HTML pages · no logins, forms, PDFs or external portals · no email. Browser experiment requires locally installed Chromium and may still be blocked.</small>
                 @if (!string.IsNullOrWhiteSpace(scanSummary))
                 {
                     <div class="notice">@scanSummary</div>
@@ -216,7 +217,10 @@ else
         catch (Exception ex) { alert = ex.Message; }
         await Reload();
     }
-    private async Task ScanWebsite()
+    private Task ScanWebsite() => ScanWebsiteCore(useBrowser: false);
+    private Task ScanWebsiteBrowser() => ScanWebsiteCore(useBrowser: true);
+
+    private async Task ScanWebsiteCore(bool useBrowser)
     {
         scanning = true;
         alert = "";
@@ -224,9 +228,13 @@ else
         await InvokeAsync(StateHasChanged);
         try
         {
-            var scan = await Flow.ResearchCompanyAsync(Id);
+            var scan = useBrowser
+                ? await Flow.ResearchCompanyWithBrowserAsync(Id)
+                : await Flow.ResearchCompanyAsync(Id);
             scanSummary = $"Fetched {scan.PagesChecked.Count} HTML page(s); {scan.PageDiagnostics.Count(x => x.IsInconclusive)} returned insufficient or suspicious content. Found {scan.Candidates.Count} possible reference(s) and {scan.Contacts.Count} published email candidate(s). {scan.SuggestedReview} {scan.Limitations}";
-            alert = "Website scan saved. Review each reference before confirming a research outcome.";
+            alert = useBrowser
+                ? "Experimental browser scan saved. Check warnings and verify sources; no process or contact is approved."
+                : "Website scan saved. Review each reference before confirming a research outcome.";
         }
         catch (Exception ex) { alert = "Research could not finish: " + ex.Message; }
         finally
