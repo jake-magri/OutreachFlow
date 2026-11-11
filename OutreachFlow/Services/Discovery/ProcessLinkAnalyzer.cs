@@ -24,6 +24,9 @@ public static class ProcessLinkAnalyzer
     private static readonly Regex Href = new(
         "\\bhref\\s*=\\s*(?:\\\"(?<url>[^\\\"]+)\\\"|'(?<url>[^']+)'|(?<url>[^\\s>]+))",
         RegexOptions.Compiled | RegexOptions.IgnoreCase, RegexTimeout);
+    private static readonly Regex Hidden = new(
+        @"<!--[\s\S]*?-->|<(script|style|noscript|template)\b[^>]*>[\s\S]*?</\1>",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase, RegexTimeout);
     private static readonly Regex Tags = new(@"<[^>]+>", RegexOptions.Compiled, RegexTimeout);
     private static readonly Regex Spaces = new(@"\s+", RegexOptions.Compiled, RegexTimeout);
 
@@ -44,7 +47,7 @@ public static class ProcessLinkAnalyzer
         profile = ResearchProfile.Validate(profile);
         var items = new Dictionary<string, ProcessLinkEvidence>(StringComparer.OrdinalIgnoreCase);
         if (html.Length > 300_000) return [];
-        foreach (Match anchor in Anchors.Matches(html))
+        foreach (Match anchor in Anchors.Matches(Hidden.Replace(html, " ")))
         {
             if (items.Count >= 20) break;
             var match = Href.Match(anchor.Groups["attributes"].Value);
