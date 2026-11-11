@@ -8,6 +8,8 @@ using OutreachFlow.Services;
 using OutreachFlow.Services.Mailbox;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.AspNetCore.Identity;
 using System.Text;
 using System.Text.Json;
 
@@ -54,6 +56,74 @@ Check(googleWorkspaceOne.SenderEmail == "first@example.org" &&
       string.IsNullOrWhiteSpace(googleWorkspaceOne.PostalAddress) &&
       string.IsNullOrWhiteSpace(googleWorkspaceOne.TargetDescription),
     "Google-first workspace defaults do not share IDs or invent business identity");
+
+// Provisioning integration: two previously unknown Google subjects must never
+// share a business workspace or adopt an existing password user's account.
+var signupDirectory = Path.Combine(Path.GetTempPath(),
+    "outreachflow-google-signup-" + Guid.NewGuid().ToString("N"));
+try
+{
+    Directory.CreateDirectory(signupDirectory);
+    using var services = new ServiceCollection()
+        .AddLogging()
+        .AddDbContextFactory<AccountDbContext>(options => options.UseSqlite(
+            "Data Source=" + Path.Combine(signupDirectory, "accounts.db")))
+        .AddDbContextFactory<OutreachDbContext>(options => options.UseSqlite(
+            "Data Source=" + Path.Combine(signupDirectory, "business.db")))
+        .AddIdentityCore<ApplicationUser>(options => options.User.RequireUniqueEmail = true)
+        .AddEntityFrameworkStores<AccountDbContext>()
+        .Services.AddScoped<GoogleUserProvisioner>()
+        .BuildServiceProvider();
+
+    using var signupScope = services.CreateScope();
+    var signupAccounts = signupScope.ServiceProvider.GetRequiredService<AccountDbContext>();
+    var signupFactory = signupScope.ServiceProvider
+        .GetRequiredService<IDbContextFactory<OutreachDbContext>>();
+    await signupAccounts.Database.EnsureCreatedAsync();
+    await using (var database = await signupFactory.CreateDbContextAsync())
+        await database.Database.EnsureCreatedAsync();
+
+    var provisioner = signupScope.ServiceProvider.GetRequiredService<GoogleUserProvisioner>();
+    var firstLogin = new ExternalLoginInfo(
+        GooglePrincipal("first@example.org", "true"),
+        "Google", "google-subject-1", "Google");
+    var secondLogin = new ExternalLoginInfo(
+        GooglePrincipal("second@example.org", "true"),
+        "Google", "google-subject-2", "Google");
+    var first = await provisioner.RegisterAsync(firstLogin);
+    var second = await provisioner.RegisterAsync(secondLogin);
+    var memberships = await signupAccounts.Memberships.AsNoTracking()
+        .OrderBy(m => m.UserId).ToListAsync();
+    Check(first.User is not null && second.User is not null &&
+          first.User.Id != second.User.Id &&
+          first.User.ActiveWorkspaceId is > 0 &&
+          second.User.ActiveWorkspaceId is > 0 &&
+          first.User.ActiveWorkspaceId != second.User.ActiveWorkspaceId &&
+          memberships.Count == 2 &&
+          memberships.All(m => m.Role == "Owner"),
+        "Google-first registration provisions distinct users and owner-only workspaces");
+    await using (var db = await signupFactory.CreateDbContextAsync())
+    {
+        var createdWorkspaces = await db.Workspaces.AsNoTracking().ToListAsync();
+        Check(createdWorkspaces.Count == 2 &&
+              createdWorkspaces.All(w => w.BusinessName == "New workspace") &&
+              createdWorkspaces.Select(w => w.SenderEmail)
+                  .OrderBy(x => x).SequenceEqual(
+                      new[] { "first@example.org", "second@example.org" }),
+            "Google-first registration creates clean business records without inherited data");
+    }
+    var collision = await provisioner.RegisterAsync(new ExternalLoginInfo(
+        GooglePrincipal("first@example.org", "true"),
+        "Google", "different-google-subject", "Google"));
+    var unverified = await provisioner.RegisterAsync(new ExternalLoginInfo(
+        GooglePrincipal("third@example.org", "false"),
+        "Google", "unverified-google-subject", "Google"));
+    Check(collision.Status == "notlinked" && collision.User is null &&
+          unverified.Status == "unverified" && unverified.User is null &&
+          await signupAccounts.Memberships.CountAsync() == 2,
+        "email collisions and unverified identities cannot create or hijack workspaces");
+}
+finally { try { Directory.Delete(signupDirectory, recursive: true); } catch { } }
 
 // Google identity login and Gmail authorization intentionally share a configurable
 // OAuth client but retain separate callbacks/scopes and explicit account linking.
