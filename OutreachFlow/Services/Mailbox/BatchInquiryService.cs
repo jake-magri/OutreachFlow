@@ -60,9 +60,11 @@ public sealed class BatchInquiryService(
         if (mode == BatchInquiryMode.Gmail && !approved)
             throw new InvalidOperationException("Live Gmail requires owner approval of the complete batch, recipients, official-process decisions and saved message template.");
         var rows = Parse(input);
+        BatchInquiryPreview? reviewedPreview = null;
         if (mode == BatchInquiryMode.Gmail)
         {
             var current = await PreviewAsync(user, input, ct);
+            reviewedPreview = current;
             if (string.IsNullOrWhiteSpace(approvalHash) || current.Hash != approvalHash)
                 throw new InvalidOperationException("The reviewed batch or message template changed. Review the exact messages again.");
         }
@@ -166,6 +168,20 @@ public sealed class BatchInquiryService(
                 }
                 else
                 {
+                    // Protect the one batch approval even if workspace templates change
+                    // after the initial review but before this row is dispatched.
+                    var expected = reviewedPreview!.Lines.Single(x =>
+                        x.To.Equals(row.Email, StringComparison.OrdinalIgnoreCase));
+                    await using (var verify = await factory.CreateDbContextAsync(ct))
+                    {
+                        var draft = await verify.Prospects.AsNoTracking()
+                            .SingleAsync(p => p.Id == prospect.Id && p.WorkspaceId == workspaceId, ct);
+                        var workspace = await verify.Workspaces.AsNoTracking()
+                            .SingleAsync(w => w.Id == workspaceId, ct);
+                        if (draft.DraftSubject != expected.Subject || draft.DraftBody != expected.Body ||
+                            workspace.SenderEmail != reviewedPreview.From)
+                            throw new InvalidOperationException("Sender or template changed after batch approval. Draft held for review.");
+                    }
                     var snapshot = await sender.PreviewAsync(user, prospect.Id, ct);
                     var dispatch = await sender.SendAsync(user, snapshot, confirmed: true, ct: ct);
                     outcomes.Add(new(row.Company, prospect.Id, dispatch.State == "Sent"
