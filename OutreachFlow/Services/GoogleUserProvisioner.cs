@@ -32,7 +32,10 @@ public sealed class GoogleUserProvisioner(
             await users.FindByNameAsync(email) is not null)
             return new(null, "notlinked");
 
-        await using var transaction = await accounts.Database.BeginTransactionAsync();
+        // Identity UserManager uses a separate scoped EF context. The auth and
+        // business SQLite files cannot participate in one atomic transaction.
+        // Roll back partial provisioning explicitly on any failed step.
+        ApplicationUser? newUser = null;
         int? newWorkspaceId = null;
         try
         {
@@ -45,10 +48,11 @@ public sealed class GoogleUserProvisioner(
             var created = await users.CreateAsync(user);
             if (!created.Succeeded)
                 return new(null, "failed");
+            newUser = user;
 
             var linked = await users.AddLoginAsync(user, external);
             if (!linked.Succeeded)
-                return new(null, "failed");
+                throw new InvalidOperationException("Could not link newly created Google account.");
 
             await using (var db = await businessFactory.CreateDbContextAsync())
             {
@@ -58,8 +62,7 @@ public sealed class GoogleUserProvisioner(
                 newWorkspaceId = workspace.Id;
             }
 
-            // These writes share the AccountDbContext transaction with the
-            // user and Google subject link.
+            // Workspaces are deliberately owned only by the newly created user.
             accounts.Memberships.Add(new WorkspaceMembership
             {
                 UserId = user.Id,
@@ -72,14 +75,23 @@ public sealed class GoogleUserProvisioner(
             if (!changed.Succeeded)
                 throw new InvalidOperationException("Could not activate new Google workspace.");
 
-            await transaction.CommitAsync();
             return new(user, "created");
         }
         catch
         {
-            await transaction.RollbackAsync();
-            // Business and auth SQLite files cannot share one atomic transaction.
-            // A failed signup must not leave an orphaned business workspace.
+            // Compensation is best-effort, with an explicit error if it fails.
+            // Never log or sign in a partially provisioned identity.
+            if (newUser is not null)
+            {
+                var linkedUser = await users.FindByIdAsync(newUser.Id);
+                if (linkedUser is not null)
+                {
+                    var deleted = await users.DeleteAsync(linkedUser);
+                    if (!deleted.Succeeded)
+                        throw new InvalidOperationException(
+                            "Google signup incomplete and identity cleanup failed; administrator repair required.");
+                }
+            }
             if (newWorkspaceId is int workspaceId)
             {
                 await using var db = await businessFactory.CreateDbContextAsync();
