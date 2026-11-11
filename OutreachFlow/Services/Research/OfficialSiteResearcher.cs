@@ -162,15 +162,15 @@ public sealed class OfficialSiteResearcher : IBrowserCompanyResearcher, IDisposa
                         var rendered = await renderer!.RenderAsync(root, page.Url,
                             (target, token) => DownloadBrowserResourceAsync(root, target, robots, token),
                             cancellationToken);
-                        var revised = ResearchPageInspector.Inspect(page.Url, rendered, profile);
+                        var revised = ResearchPageInspector.Inspect(page.Url, rendered.Html, profile);
                         if (!revised.IsInconclusive)
                         {
                             browserImproved++;
-                            page = page with { Content = rendered };
+                            page = page with { Content = rendered.Html };
                             diagnostic = revised with
                             {
                                 HttpStatusCode = (int)page.StatusCode,
-                                BrowserDecision = "Rendered meaningful HTML; original rule: " + diagnostic.InitialRuleId
+                                BrowserDecision = "Rendered meaningful HTML; original rule: " + diagnostic.InitialRuleId + ". " + RenderResourceSummary(rendered)
                             };
                         }
                         else
@@ -178,7 +178,7 @@ public sealed class OfficialSiteResearcher : IBrowserCompanyResearcher, IDisposa
                             diagnostic = diagnostic with { Warning = diagnostic.Warning +
                                 " Browser-rendered HTML was still inconclusive.",
                                 BrowserDecision = "Attempted; rendered result still inconclusive (" +
-                                    revised.InitialRuleId + ")" };
+                                    revised.InitialRuleId + "). " + RenderResourceSummary(rendered) };
                         }
                     }
                     catch (Exception ex) when (!cancellationToken.IsCancellationRequested &&
@@ -250,6 +250,10 @@ public sealed class OfficialSiteResearcher : IBrowserCompanyResearcher, IDisposa
             PageDiagnostics = diagnostics
         };
     }
+
+    private static string RenderResourceSummary(BrowserRenderResult result) =>
+        $"Network: fulfilled={result.FulfilledRequests}, blocked={result.BlockedRequests}, " +
+        $"blocked scripts={result.BlockedScriptRequests}, unsupported={result.UnsupportedRequests}, failed={result.FailedRequests}.";
 
     private sealed record PageResponse(Uri Url, HttpStatusCode StatusCode, bool IsHtml, string Content);
 
