@@ -53,6 +53,7 @@ public sealed class PlaywrightHtmlBrowserRenderer : IHtmlBrowserRenderer
         if (!ResearchUrlPolicy.IsSameSite(root, page))
             throw new InvalidOperationException("Browser page is outside the approved site.");
 
+        var requested = 0;
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(MaxDuration);
         var ct = timeout.Token;
@@ -132,5 +133,4 @@ public sealed class PlaywrightHtmlBrowserRenderer : IHtmlBrowserRenderer
         return html;
     }
 
-    private int requested;
 }
