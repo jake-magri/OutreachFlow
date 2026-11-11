@@ -110,14 +110,17 @@ public sealed class GmailMailboxService(IConfiguration config, IHttpClientFactor
     private const string GmailEndpoint = "https://gmail.googleapis.com/gmail/v1/users/me/";
 
     public bool IsConfigured =>
+        OperatingSystem.IsWindows() &&
         !string.IsNullOrWhiteSpace(config["Gmail:ClientId"]) &&
         !string.IsNullOrWhiteSpace(config["Gmail:ClientSecret"]) &&
         IsAllowedRedirectUri(config["Gmail:RedirectUri"]);
 
     public static bool IsAllowedRedirectUri(string? value) =>
         Uri.TryCreate(value, UriKind.Absolute, out var uri) &&
-        uri.Scheme == Uri.UriSchemeHttps && IPAddress.TryParse(uri.Host, out var ip) &&
-        IPAddress.IsLoopback(ip) && uri.AbsolutePath == "/mailbox/google/callback" &&
+        uri.Scheme == Uri.UriSchemeHttps &&
+        (uri.Host.Equals("localhost", StringComparison.OrdinalIgnoreCase) ||
+         (IPAddress.TryParse(uri.Host, out var ip) && IPAddress.IsLoopback(ip))) &&
+        uri.AbsolutePath == "/mailbox/google/callback" &&
         string.IsNullOrEmpty(uri.Query) && string.IsNullOrEmpty(uri.Fragment);
 
     public static string Base64Url(byte[] bytes) =>
@@ -248,13 +251,12 @@ public sealed class GmailMailboxService(IConfiguration config, IHttpClientFactor
             message.TryGetProperty("snippet", out var snippet))
             body = snippet.GetString() ?? "";
         if (body.Length > 4000) body = body[..4000];
-        var received = DateTime.UtcNow;
-        if (message.TryGetProperty("internalDate", out var stamp) &&
-            long.TryParse(stamp.ValueKind == JsonValueKind.String ? stamp.GetString() : stamp.GetRawText(), out var millis))
-        {
-            try { received = DateTimeOffset.FromUnixTimeMilliseconds(millis).UtcDateTime; }
-            catch (ArgumentOutOfRangeException) { return null; }
-        }
+        if (!message.TryGetProperty("internalDate", out var stamp) ||
+            !long.TryParse(stamp.ValueKind == JsonValueKind.String ? stamp.GetString() :
+                stamp.GetRawText(), out var millis)) return null;
+        DateTime received;
+        try { received = DateTimeOffset.FromUnixTimeMilliseconds(millis).UtcDateTime; }
+        catch (ArgumentOutOfRangeException) { return null; }
         return new GmailInboxItem(id, sender.Address, subject[..Math.Min(subject.Length, 300)],
             body, received, prospectId, companyName);
     }
