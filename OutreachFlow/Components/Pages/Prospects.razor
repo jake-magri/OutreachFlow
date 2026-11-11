@@ -45,7 +45,7 @@
                 quotas, suppression and no-retry rules still apply. No follow-up automation is enabled.</p>
         </section>
     }
-    @else if (!Gmail.SendingAvailable)
+    else if (!Gmail.SendingAvailable)
     {
         <p class="help">Live Gmail sending is currently disabled. This form is ready for offline test runs;
             Gmail must be separately authorized and enabled for explicit real batches.</p>
