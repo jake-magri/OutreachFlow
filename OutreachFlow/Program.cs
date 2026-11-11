@@ -57,8 +57,8 @@ if (GoogleSignInEndpoints.Configured(builder.Configuration))
         options.SaveTokens = false;
         // Google's OAuth userinfo response explicitly reports verified_email.
         // Fail closed for first-time registration if that flag is absent/false.
-        options.ClaimActions.MapJsonKey("google_email_verified", "verified_email");
-        options.ClaimActions.MapJsonKey("google_verified_email", "email_verified");
+        options.ClaimActions.Add(new JsonKeyClaimAction("google_email_verified", "string", "verified_email"));
+        options.ClaimActions.Add(new JsonKeyClaimAction("google_verified_email", "string", "email_verified"));
         options.CorrelationCookie.SecurePolicy = CookieSecurePolicy.Always;
     });
 }
