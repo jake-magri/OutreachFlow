@@ -1,0 +1,111 @@
+@page "/discover"
+@using OutreachFlow.Services.Discovery
+@inject OpportunityDiscoveryService Discovery
+<PageTitle>Discover · OutreachFlow</PageTitle>
+
+<section class="page-header">
+    <div>
+        <div class="eyebrow">SEARCH-INDEX DISCOVERY</div>
+        <h1>Discover opportunities</h1>
+        <p>Search for potential official processes using your active workspace profile. All results remain unverified until you inspect their sources.</p>
+    </div>
+</section>
+
+<section class="panel spaced">
+    <div class="panel-heading">
+        <h2>On-demand web discovery</h2>
+        <small>@Discovery.ProviderName</small>
+    </div>
+    @if (!Discovery.IsSearchConfigured)
+    {
+        <p>Search isn't configured. The application owner can enable it with a server-side Tavily API key. No key is needed from workspace users.</p>
+    }
+    else
+    {
+        <p>Each click submits up to two basic web searches, each returning at most five indexed results. This does not use an LLM or automatically contact anyone.</p>
+    }
+    @if (budget is not null)
+    {
+        <p><strong>Application search budget:</strong> @budget.Remaining of @budget.Limit requests remaining for @budget.MonthUtc (UTC), shared by all workspaces.</p>
+    }
+    <div class="actions">
+        <button class="button primary" @onclick="RunSearch" disabled="@(busy || !Discovery.IsSearchConfigured)">
+            @(busy ? "Searching…" : "Search using workspace profile")
+        </button>
+        <a class="button" href="/settings">Edit research keywords</a>
+    </div>
+    @if (!string.IsNullOrWhiteSpace(notice)) { <div class="notice">@notice</div> }
+</section>
+
+@if (batch is not null)
+{
+    <section class="panel spaced">
+        <div class="panel-heading">
+            <h2>Indexed candidates — manual review</h2>
+            <small>@batch.Candidates.Count suggestions · @batch.RetrievedUtc.ToString("u")</small>
+        </div>
+        <p class="help">Search snippets are not verified by OutreachFlow and are not stored as official evidence. Scores measure keyword relevance only—not the probability that a contract exists, the site's authenticity, or whether outreach is permitted.</p>
+        @foreach (var query in batch.Queries) { <p><small>Query: @query</small></p> }
+        @foreach (var warning in batch.Warnings) { <p class="notice">@warning</p> }
+        @if (batch.Candidates.Count == 0) { <p>No candidates were returned. This does not mean that no opportunities exist.</p> }
+        @foreach (var candidate in batch.Candidates)
+        {
+            <div class="evidence">
+                <strong>@candidate.Title</strong>
+                <p><small>Relevance @candidate.RelevanceScore / 100 · @candidate.Host · @candidate.SourceTier</small></p>
+                <a href="@candidate.Url" target="_blank" rel="noopener noreferrer">Inspect original result</a>
+                <p>@candidate.Summary</p>
+                <div class="actions">
+                    <button class="button" @onclick="() => Import(candidate)" disabled="@busy">Add to prospects for verification</button>
+                </div>
+            </div>
+        }
+    </section>
+}
+
+@code {
+    private OpportunityDiscoveryBatch? batch;
+    private SearchBudgetSnapshot? budget;
+    private bool busy;
+    private string notice = "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        try { budget = await Discovery.GetBudgetAsync(); }
+        catch (Exception ex) { notice = "Search budget unavailable: " + ex.Message; }
+    }
+
+    private async Task RunSearch()
+    {
+        busy = true;
+        notice = "";
+        batch = null;
+        try
+        {
+            batch = await Discovery.DiscoverAsync();
+            budget = batch.Budget;
+            notice = $"Research suggestions retrieved from {batch.ProviderName}. Inspect sources before importing.";
+        }
+        catch (Exception ex)
+        {
+            notice = "Discovery could not finish: " + ex.Message;
+            try { budget = await Discovery.GetBudgetAsync(); } catch { /* Ledger failure is already visible. */ }
+        }
+        finally { busy = false; }
+    }
+
+    private async Task Import(OpportunityCandidate candidate)
+    {
+        if (batch is null) return;
+        busy = true;
+        try
+        {
+            var (added, skipped) = await Discovery.ImportReviewedAsync(batch.WorkspaceId, candidate);
+            notice = added > 0
+                ? "Added as an unverified prospect. Open Prospects, verify the official process, and record research evidence before taking action."
+                : $"Import skipped ({skipped}); this candidate may already be in your workspace.";
+        }
+        catch (Exception ex) { notice = "Import failed: " + ex.Message; }
+        finally { busy = false; }
+    }
+}

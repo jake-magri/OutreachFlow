@@ -12,3 +12,6 @@ appsettings.Production.json
 
 # Local workspace-specific research configuration; do not commit user business data.
 research-profiles/
+
+# On-disk app-wide search request ledger (not user data or a provider token).
+search-usage/

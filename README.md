@@ -47,6 +47,25 @@ The normal **Research company website** action remains unchanged. A separate **R
 
 Local Chromium installation is required. See [BROWSER-RESEARCH-PILOT.md](BROWSER-RESEARCH-PILOT.md) for Windows setup, comparison tests, security limits and the City of Charlotte supplier-registration pilot. No new SQLite tables or AWS resources are introduced.
 
+## Search-index discovery (PR #7)
+
+The **Discover** page adds **on-demand Tavily basic web searches** using each workspace's configured research profile and service area. No LLM or agent API is invoked; search queries are generated deterministically. Results are ranked by keyword relevance, deduplicated and URL-screened, and shown as **unverified index candidates**. The owner must inspect a result and click **Add to prospects for verification**; importing never authorizes an email or classifies an official process. The existing research scanner and manually verified process selection remain the next steps.
+
+**Operator pays for and controls search; workspace users never enter API keys.** Local development uses a free Tavily Researcher account (currently 1,000 API credits/month; basic search costs one credit, subject to provider policy). Search is disabled when the server does not have a key. Configure it in .NET development user secrets, not Git:
+
+```powershell
+dotnet user-secrets set "Tavily:ApiKey" "<your operator-only key>" --project OutreachFlow
+dotnet run --project OutreachFlow
+```
+
+Treat your key as a secret: command-line values can enter shell history; use trusted local credential-entry procedures. An alternative is a process-only `TAVILY_API_KEY` environment variable (do not commit `.env`, keys or screenshots). The server does not return the key to the browser.
+
+**Cost controls:** one click makes at most two basic searches and requests up to five results each. The application reserves each request against a shared, durable UTC-month ledger *before* making the provider call. The default cap is 100 attempts/month across all workspaces; the operator may set `Search:MonthlyRequestLimit` (1–1,000). Failed requests count conservatively, and a corrupt usage ledger **blocks searches rather than silently resetting the budget**. `search-usage/search-requests.json` is local, gitignored, and should be backed up with your SQLite DB and `research-profiles` folder. This is a local single-process prototype; distributed production billing and per-tenant quotas require further work.
+
+**Provider content is ephemeral:** titles and snippets are displayed for review but not saved as evidence. When importing, only the URL, truncated title and an unverified origin label are placed into the existing prospect record. Do not treat relevance scores as source authenticity, contract availability or approval to contact the organization. A blocked live site remains **inconclusive**, even if indexed results are visible.
+
+See [DISCOVERY-PILOT.md](DISCOVERY-PILOT.md) for acceptance tests, metrics and provider constraints. No new database tables, migrations, AWS services or LLM subscriptions are introduced.
+
 ## Run locally
 
 Prerequisites: .NET 10 SDK, Git, and Windows/Visual Studio or another supported .NET environment.
