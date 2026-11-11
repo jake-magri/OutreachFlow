@@ -7,6 +7,7 @@ using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using OutreachFlow.Data;
 using OutreachFlow.Models;
+using OutreachFlow.Services;
 
 namespace OutreachFlow.Services.Mailbox;
 
@@ -166,7 +167,7 @@ public sealed class BatchInquiryService(
                 else
                 {
                     var snapshot = await sender.PreviewAsync(user, prospect.Id, ct);
-                    var dispatch = await sender.SendAsync(user, snapshot, confirmed: true, ct);
+                    var dispatch = await sender.SendAsync(user, snapshot, confirmed: true, ct: ct);
                     outcomes.Add(new(row.Company, prospect.Id, dispatch.State == "Sent"
                         ? "Gmail accepted" : "Held: " + dispatch.State));
                 }
