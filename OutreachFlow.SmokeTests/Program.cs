@@ -158,6 +158,8 @@ var pilotTriage = OpportunityRanker.Rank(new[]
         "Browse 66 truck washing jobs in Charlotte NC. Full time."))
 }, ResearchProfileCatalog.Preset("fleet"));
 
+foreach (var pilot in pilotTriage)
+    Console.WriteLine($"PILOT TRIAGE: {pilot.Host} | {pilot.Suggestion.Step} | {pilot.Suggestion.Explanation}");
 SuggestedNextStep PilotStep(string host) => pilotTriage.Single(x =>
     x.Host.Equals(host, StringComparison.OrdinalIgnoreCase)).Suggestion.Step;
 Check(pilotTriage.Count == 8 &&
