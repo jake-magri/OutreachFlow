@@ -110,6 +110,8 @@ public sealed partial class GmailMailboxService(IConfiguration config, IHttpClie
     private const string AuthEndpoint = "https://accounts.google.com/o/oauth2/v2/auth";
     private const string TokenEndpoint = "https://oauth2.googleapis.com/token";
     private const string GmailEndpoint = "https://gmail.googleapis.com/gmail/v1/users/me/";
+    private const int MaxGmailJsonBytes = 512 * 1024;
+    private const int MaxJsonDepth = 32;
 
     public bool IsConfigured =>
         OperatingSystem.IsWindows() &&
@@ -160,8 +162,7 @@ public sealed partial class GmailMailboxService(IConfiguration config, IHttpClie
             new FormUrlEncodedContent(parameters), ct);
         if (!response.IsSuccessStatusCode)
             throw new InvalidOperationException("Google authorization failed; reconnect or review OAuth settings.");
-        using var stream = await response.Content.ReadAsStreamAsync(ct);
-        return await JsonDocument.ParseAsync(stream, cancellationToken: ct);
+        return await BoundedJsonAsync(response, ct);
     }
 
     public async Task ConnectAsync(int workspaceId, string code, string verifier,
@@ -209,8 +210,29 @@ public sealed partial class GmailMailboxService(IConfiguration config, IHttpClie
             HttpCompletionOption.ResponseHeadersRead, ct);
         if (!response.IsSuccessStatusCode)
             throw new InvalidOperationException("Gmail read failed. The authorization may have expired or been revoked.");
+        return await BoundedJsonAsync(response, ct);
+    }
+
+    private static async Task<JsonDocument> BoundedJsonAsync(HttpResponseMessage response, CancellationToken ct)
+    {
+        if (response.Content.Headers.ContentLength > MaxGmailJsonBytes)
+            throw new InvalidOperationException("Gmail response exceeds the permitted size. Review manually.");
         using var stream = await response.Content.ReadAsStreamAsync(ct);
-        return await JsonDocument.ParseAsync(stream, cancellationToken: ct);
+        using var buffer = new MemoryStream();
+        var bytes = new byte[8192];
+        int count;
+        while ((count = await stream.ReadAsync(bytes, ct)) != 0)
+        {
+            if (buffer.Length + count > MaxGmailJsonBytes)
+                throw new InvalidOperationException("Gmail response exceeds the permitted size. Review manually.");
+            buffer.Write(bytes, 0, count);
+        }
+        buffer.Position = 0;
+        return await JsonDocument.ParseAsync(buffer, new JsonDocumentOptions
+        {
+            MaxDepth = MaxJsonDepth, CommentHandling = JsonCommentHandling.Disallow,
+            AllowTrailingCommas = false
+        }, ct);
     }
 
     private async Task<string> TokenAsync(GmailConnection connection, CancellationToken ct)
@@ -234,9 +256,11 @@ public sealed partial class GmailMailboxService(IConfiguration config, IHttpClie
         string companyName, string expectedFrom)
     {
         // A malformed or non-email response can never authorize a new contact.
-        if (!message.TryGetProperty("payload", out var payload) ||
+        if (message.ValueKind != JsonValueKind.Object ||
+            !message.TryGetProperty("payload", out var payload) ||
+            payload.ValueKind != JsonValueKind.Object ||
             !payload.TryGetProperty("headers", out var headers) ||
-            headers.ValueKind != JsonValueKind.Array) return null;
+            headers.ValueKind != JsonValueKind.Array || headers.GetArrayLength() > 100) return null;
         string Header(string name)
         {
             foreach (var header in headers.EnumerateArray())
@@ -257,10 +281,8 @@ public sealed partial class GmailMailboxService(IConfiguration config, IHttpClie
             !sender.Address.Equals(expectedFrom, StringComparison.OrdinalIgnoreCase))
             return null;
         var subject = Header("Subject");
-        var body = PlainBody(payload);
-        if (string.IsNullOrWhiteSpace(body) &&
-            message.TryGetProperty("snippet", out var snippet))
-            body = snippet.GetString() ?? "";
+        if (subject.Length > 4000) return null;
+        var body = PlainBody(payload); // Never promote Gmail snippets to actual mail content.
         if (body.Length > 4000) body = body[..4000];
         if (!message.TryGetProperty("internalDate", out var stamp) ||
             !long.TryParse(stamp.ValueKind == JsonValueKind.String ? stamp.GetString() :
@@ -272,19 +294,27 @@ public sealed partial class GmailMailboxService(IConfiguration config, IHttpClie
             body, received, prospectId, companyName, thread.GetString()!);
     }
 
-    private static string PlainBody(JsonElement payload)
+    private static string PlainBody(JsonElement payload) => PlainBody(payload, 0, new int[] { 0 });
+
+    private static string PlainBody(JsonElement payload, int depth, int[] visited)
     {
+        if (depth > 6 || ++visited[0] > 50 || payload.ValueKind != JsonValueKind.Object)
+            return "";
         if (payload.TryGetProperty("mimeType", out var mime) &&
+            mime.ValueKind == JsonValueKind.String &&
             mime.GetString()?.Equals("text/plain", StringComparison.OrdinalIgnoreCase) == true &&
             payload.TryGetProperty("body", out var body) &&
-            body.TryGetProperty("data", out var raw))
+            body.ValueKind == JsonValueKind.Object &&
+            body.TryGetProperty("data", out var raw) &&
+            raw.ValueKind == JsonValueKind.String)
             return DecodeBody(raw.GetString() ?? "");
         if (payload.TryGetProperty("parts", out var parts) &&
             parts.ValueKind == JsonValueKind.Array)
         {
-            foreach (var part in parts.EnumerateArray().Take(20))
+            if (parts.GetArrayLength() > 20) return "";
+            foreach (var part in parts.EnumerateArray())
             {
-                var found = PlainBody(part);
+                var found = PlainBody(part, depth + 1, visited);
                 if (found.Length > 0) return found;
             }
         }
@@ -356,17 +386,15 @@ public sealed partial class GmailMailboxService(IConfiguration config, IHttpClie
             prospect.Status is ProspectStatus.Suppressed or ProspectStatus.Closed ||
             string.IsNullOrWhiteSpace(prospect.ContactEmail))
             throw new InvalidOperationException("An open, previously contacted prospect is required.");
-        var firstSent = await db.Messages.AsNoTracking()
-            .Where(m => m.ProspectId == prospectId && m.Direction == "Outbound" && !m.IsSimulation)
-            .OrderBy(m => m.OccurredUtc).Select(m => (DateTime?)m.OccurredUtc)
-            .FirstOrDefaultAsync(ct);
-        if (firstSent is null)
-            throw new InvalidOperationException("Record a real outgoing email before importing a reply.");
-        var item = ParseInbound(messageId, source.RootElement, prospect.Id,
-            prospect.CompanyName, prospect.ContactEmail) ??
-            throw new InvalidOperationException("Gmail identity or sender does not match the reviewed message.");
-        if (item.ReceivedUtc < firstSent.Value.AddMinutes(-5))
-            throw new InvalidOperationException("This message predates the recorded outgoing inquiry.");
+        var anchors = await SentAnchorsAsync(db, workspaceId, connection.Email, ct);
+        var threadMap = GmailReplyCorrelation.UniqueThreads(anchors);
+        var threadId = source.RootElement.TryGetProperty("threadId", out var sourceThread) &&
+            sourceThread.ValueKind == JsonValueKind.String ? sourceThread.GetString() : null;
+        if (threadId is null || !threadMap.TryGetValue(threadId, out var anchor) ||
+            anchor.ProspectId != prospectId)
+            throw new InvalidOperationException("Reply has no unique provider-confirmed sent conversation. Review in Gmail.");
+        var item = GmailReplyCorrelation.Match(messageId, source.RootElement, anchor) ??
+            throw new InvalidOperationException("Gmail thread, sender, recipient or reply references do not match the sent inquiry.");
         if (string.IsNullOrWhiteSpace(item.Body))
             throw new InvalidOperationException("No readable message text was found; review in Gmail manually.");
 
@@ -421,10 +449,30 @@ public sealed partial class GmailMailboxService(IConfiguration config, IHttpClie
                  "gmail:" + m.MessageId == activity.Detail)
          select activity.Id).AnyAsync(ct);
 
+    private static async Task<IReadOnlyList<GmailSentAnchor>> SentAnchorsAsync(
+        OutreachDbContext db, int workspaceId, string mailbox, CancellationToken ct)
+    {
+        // Only an actual Gmail accepted initial dispatch is a trustworthy anchor.
+        // Legacy owner-attested external sends lack provider identity and remain manual.
+        var sent = await (from d in db.OutboundDispatches.AsNoTracking()
+                          join p in db.Prospects.AsNoTracking() on d.ProspectId equals p.Id
+                          join m in db.ProviderMessages.AsNoTracking() on d.ProspectId equals m.ProspectId
+                          join history in db.Messages.AsNoTracking() on m.OutreachMessageId equals history.Id
+                          where d.WorkspaceId == workspaceId && p.WorkspaceId == workspaceId &&
+                              m.WorkspaceId == workspaceId && d.State == "Sent" &&
+                              m.Provider == "gmail" && m.MailboxEmail == mailbox &&
+                              history.Direction == "Outbound" && !history.IsSimulation &&
+                              p.Status != ProspectStatus.Closed && p.Status != ProspectStatus.Suppressed
+                          select new { d, p, m }).ToListAsync(ct);
+        return sent.Where(x => x.d.From.Equals(mailbox, StringComparison.OrdinalIgnoreCase) &&
+                    x.d.To.Equals(x.p.ContactEmail, StringComparison.OrdinalIgnoreCase))
+            .Select(x => new GmailSentAnchor(x.p.Id, x.p.CompanyName, x.p.ContactEmail,
+                x.d.From, x.m.ThreadId, x.d.RfcMessageId, x.d.ApprovedUtc)).ToArray();
+    }
+
     /// <summary>
-    /// Returns only recent candidate replies whose From matches a recorded
-    /// contact with an owner-attested real outbound message. Thread attribution
-    /// is NOT proven; always verify each preview before import.
+    /// Reviews only provider-confirmed, unambiguous sent-conversation replies.
+    /// Ambiguous/legacy sender-only mail remains in Gmail for manual investigation.
     /// </summary>
     public async Task<IReadOnlyList<GmailInboxItem>> ReviewInboxAsync(int workspaceId,
         IDbContextFactory<OutreachDbContext> factory, CancellationToken ct = default)
@@ -436,21 +484,9 @@ public sealed partial class GmailMailboxService(IConfiguration config, IHttpClie
             .SingleAsync(w => w.Id == workspaceId, ct);
         if (!connection.Email.Equals(workspace.SenderEmail, StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException("The connected mailbox no longer matches the workspace sender.");
-        var all = await db.Prospects.AsNoTracking().Where(p =>
-            p.WorkspaceId == workspaceId && p.Attempts > 0 &&
-            p.Status != ProspectStatus.Closed &&
-            p.Status != ProspectStatus.Suppressed &&
-            p.ContactEmail != "").ToListAsync(ct);
-        var eligibleIds = all.Select(p => p.Id).ToArray();
-        var sent = await db.Messages.AsNoTracking().Where(m =>
-            !m.IsSimulation && m.Direction == "Outbound" &&
-            eligibleIds.Contains(m.ProspectId))
-            .Select(m => m.ProspectId).Distinct().ToListAsync(ct);
-        var people = all.Where(p => sent.Contains(p.Id))
-            .GroupBy(p => p.ContactEmail, StringComparer.OrdinalIgnoreCase)
-            .Where(g => g.Count() == 1).ToDictionary(g => g.Key, g => g.Single(),
-                StringComparer.OrdinalIgnoreCase);
-        if (people.Count == 0) return [];
+        var anchors = GmailReplyCorrelation.UniqueThreads(
+            await SentAnchorsAsync(db, workspaceId, connection.Email, ct));
+        if (anchors.Count == 0) return [];
         var token = await TokenAsync(connection, ct);
         using var list = await GetAsync("messages?labelIds=INBOX&maxResults=20&q=" +
             Uri.EscapeDataString("newer_than:30d"), token, ct);
@@ -471,20 +507,22 @@ public sealed partial class GmailMailboxService(IConfiguration config, IHttpClie
         var found = new List<GmailInboxItem>();
         foreach (var item in messages.EnumerateArray().Take(20))
         {
-            var id = item.GetProperty("id").GetString() ?? "";
-            if (id.Length == 0 || id.Length > 100 || processed.Contains("gmail:" + id)) continue;
+            if (item.ValueKind != JsonValueKind.Object ||
+                !item.TryGetProperty("id", out var idElement) ||
+                idElement.ValueKind != JsonValueKind.String) continue;
+            var id = idElement.GetString() ?? "";
+            if (id.Length is < 1 or > 100 ||
+                !id.All(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '_') ||
+                processed.Contains("gmail:" + id)) continue;
             using var message = await GetAsync("messages/" + Uri.EscapeDataString(id) +
                 "?format=full", token, ct);
             var payload = message.RootElement;
-            foreach (var prospect in people.Values)
+            var thread = payload.TryGetProperty("threadId", out var threadElement) &&
+                threadElement.ValueKind == JsonValueKind.String ? threadElement.GetString() : null;
+            if (thread is not null && anchors.TryGetValue(thread, out var anchor))
             {
-                var candidate = ParseInbound(id, payload, prospect.Id, prospect.CompanyName,
-                    prospect.ContactEmail);
-                if (candidate is not null)
-                {
-                    found.Add(candidate);
-                    break;
-                }
+                var candidate = GmailReplyCorrelation.Match(id, payload, anchor);
+                if (candidate is not null) found.Add(candidate);
             }
         }
         return found.OrderByDescending(x => x.ReceivedUtc).ToArray();

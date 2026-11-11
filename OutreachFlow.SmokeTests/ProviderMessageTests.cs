@@ -39,10 +39,21 @@ internal static class ProviderMessageTests
                 await db.SaveChangesAsync();
                 firstId = first.Id;
                 secondId = second.Id;
-                db.Messages.AddRange(new OutreachMessage { ProspectId = firstId, IsSimulation = false,
-                    OccurredUtc = DateTime.UtcNow.AddMinutes(-1) },
+                var acceptedAt = DateTime.UtcNow.AddMinutes(-1);
+                var firstOutbound = new OutreachMessage { ProspectId = firstId, IsSimulation = false,
+                    Direction = "Outbound", OccurredUtc = acceptedAt };
+                db.Messages.AddRange(firstOutbound,
                     new OutreachMessage { ProspectId = secondId, IsSimulation = false,
-                    OccurredUtc = DateTime.UtcNow.AddMinutes(-1) });
+                        Direction = "Outbound", OccurredUtc = acceptedAt });
+                db.OutboundDispatches.Add(new OutboundDispatch {
+                    WorkspaceId = workspaceId, ProspectId = firstId, State = "Sent",
+                    From = "owner@example.org", To = "contact@example.org",
+                    RfcMessageId = "<sent-fixture@example.org>", ApprovedUtc = acceptedAt
+                });
+                db.ProviderMessages.Add(new ProviderMessage {
+                    WorkspaceId = workspaceId, ProspectId = firstId, Message = firstOutbound,
+                    MailboxEmail = "owner@example.org", MessageId = "sent-message-1", ThreadId = "thread-1"
+                });
                 await db.SaveChangesAsync();
             }
             var store = new GmailConnectionStore(Path.Combine(root, "tokens"), new EphemeralDataProtectionProvider());
@@ -56,7 +67,7 @@ internal static class ProviderMessageTests
             Check(imports.Count(x => x) == 1, "concurrent reviewers commit exactly one Gmail import");
             await using (var db = factory.CreateDbContext())
             {
-                var provider = await db.ProviderMessages.SingleAsync();
+                var provider = await db.ProviderMessages.SingleAsync(m => m.MessageId == "message-1");
                 Check(provider.ThreadId == "thread-1" && provider.MailboxEmail == "owner@example.org" &&
                     provider.ProspectId == firstId && provider.WorkspaceId == workspaceId,
                     "Gmail message and conversation identity are persisted with tenant ownership");
@@ -147,6 +158,8 @@ internal static class ProviderMessageTests
                     internalDate = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString(),
                     payload = new { mimeType = "text/plain", headers = new[] {
                         new { name = "From", value = "contact@example.org" },
+                        new { name = "To", value = "owner@example.org" },
+                        new { name = "In-Reply-To", value = "<sent-fixture@example.org>" },
                         new { name = "Subject", value = "Fixture reply" } },
                         body = new { data = GmailMailboxService.Base64Url(Encoding.UTF8.GetBytes("No thanks.")) } } };
             }

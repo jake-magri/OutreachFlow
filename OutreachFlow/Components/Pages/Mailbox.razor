@@ -40,7 +40,7 @@
             <a class="button" href="/mailbox/google/connect?send=1">Grant Gmail sending permission</a>
         }
         @if (!string.IsNullOrWhiteSpace(OAuthError)) { <p class="notice">Google connection was not completed. Check consent, mailbox identity and local OAuth settings, then reconnect. Existing authorization is retained.</p> }
-        <p class="help">Only the latest 20 inbox messages from the last 30 days are examined. Candidate replies must match an existing prospect with a real, owner-recorded outgoing message. Other inbox messages are not displayed or imported.</p>
+        <p class="help">This review checks at most 20 inbox messages from the last 30 days. It shows only replies with a unique Gmail-confirmed sent thread and matching sender, recipient and reply headers. Earlier manually attested emails and ambiguous threads must be reviewed directly in Gmail.</p>
         <div class="actions">
             <button class="button primary" @onclick="Review" disabled="@busy">@(busy ? "Reviewing…" : "Review matching inbox replies")</button>
             <button class="button" @onclick="Disconnect" disabled="@busy">Disconnect local authorization</button>
@@ -51,7 +51,7 @@
 {
     <section class="panel spaced">
         <div class="panel-heading"><h2>Owner review</h2><small>@items.Count matching messages</small></div>
-        <p class="help">Review source messages in Gmail if their identity or context is uncertain. This app cannot authenticate the human sender from a From header alone. Imports are manually classified and permanently pause simulated follow-ups.</p>
+        <p class="help">A confirmed Gmail thread and matching headers establish conversation association, not the human sender's authenticity. Review the message in Gmail before classifying it. Imports are manual and pause simulated follow-ups.</p>
         @if (items.Count == 0) { <p>No matching, unimported replies appeared in this bounded inbox review. This is not proof that no replies exist.</p> }
         @foreach (var item in items)
         {
