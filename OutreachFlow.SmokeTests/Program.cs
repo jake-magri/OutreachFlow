@@ -7,6 +7,7 @@ using OutreachFlow.Models;
 using OutreachFlow.Services;
 using OutreachFlow.Services.Mailbox;
 using Microsoft.AspNetCore.DataProtection;
+using Microsoft.Extensions.Configuration;
 using System.Text;
 using System.Text.Json;
 
