@@ -13,6 +13,7 @@ public sealed record ResearchScan(IReadOnlyList<ResearchCandidate> Candidates,
     public IReadOnlyList<ResearchContact> Contacts { get; init; } = [];
     public string SuggestedReview { get; init; } = "";
     public IReadOnlyList<ResearchPageDiagnostic> PageDiagnostics { get; init; } = [];
+    public IReadOnlyList<OutreachFlow.Services.Discovery.ProcessLinkEvidence> ProcessLinks { get; init; } = [];
 }
 
 public interface ICompanyResearcher
