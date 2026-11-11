@@ -22,6 +22,59 @@ static async Task MustReject(Func<Task> action, string scenario)
     throw new Exception($"FAILED: {scenario}");
 }
 
+// Browser-render path is explicitly opt-in and must never follow unsafe destinations.
+var browserRoot = new Uri("https://www.example.org/");
+Check(BrowserResearchPolicy.AllowResource(browserRoot,
+    "https://www.example.org/supplier-registration", "GET"),
+    "browser policy permits same-site read-only document requests");
+Check(!BrowserResearchPolicy.AllowResource(browserRoot,
+    "http://127.0.0.1/secret", "GET") &&
+    !BrowserResearchPolicy.AllowResource(browserRoot,
+    "https://api.example.org/private", "GET") &&
+    !BrowserResearchPolicy.AllowResource(browserRoot,
+    "https://www.example.org/apply", "POST") &&
+    !BrowserResearchPolicy.AllowResource(browserRoot,
+    "file:///etc/passwd", "GET") &&
+    !BrowserResearchPolicy.AllowResource(browserRoot,
+    "https://user:pass@www.example.org/", "GET"),
+    "browser policy blocks other hosts, credentials, local files and mutating methods");
+Check(!BrowserResearchPolicy.AllowMediaType("application/octet-stream") &&
+    BrowserResearchPolicy.AllowMediaType("text/html") &&
+    BrowserResearchPolicy.AllowMediaType("application/javascript"),
+    "browser policy limits proxy content to textual resources");
+var renderableShell = new ResearchPageDiagnostic(browserRoot.AbsoluteUri,
+    "Supplier registration", 40, Array.Empty<string>(),
+    "The returned HTML has very little readable text (possibly a JavaScript-only shell).");
+var blockedPage = renderableShell with { Warning =
+    "The returned HTML resembles a block/challenge page, not reliable business content." };
+Check(BrowserResearchPolicy.MayRender(renderableShell) &&
+    !BrowserResearchPolicy.MayRender(blockedPage),
+    "browser experiment attempts JavaScript shells but never retries site access challenges");
+
+// The opt-in browser integration test runs only when Chromium is installed and explicitly enabled.
+if (Environment.GetEnvironmentVariable("OUTREACHFLOW_BROWSER_TESTS") == "1")
+{
+    var expectedContent = "Rendered supplier instructions ready for human review";
+    var fixture = "<html><head><title>Portal</title></head><body>" +
+        "<div id='app'>Loading</div><script>" +
+        "setTimeout(() => { document.getElementById('app').textContent = '" +
+        expectedContent + "'; }, 100);" +
+        "</script></body></html>";
+    var renderer = new PlaywrightHtmlBrowserRenderer();
+    var fetched = 0;
+    var html = await renderer.RenderAsync(browserRoot,
+        new Uri("https://www.example.org/supplier-registration"),
+        (resource, _) =>
+        {
+            fetched++;
+            Check(resource.Host == "www.example.org",
+                "browser resource requests cannot leave the approved host");
+            return Task.FromResult(new BrowserResource(200, "text/html", fixture));
+        });
+    Check(html.Contains(expectedContent, StringComparison.Ordinal) && fetched > 0,
+        "Chromium executes JavaScript and returns rendered HTML through the safe fetch callback");
+}
+
 // New workspaces must never inherit another owner's personal or business contact details.
 var blankWorkspace = new Workspace();
 Check(blankWorkspace.BusinessName == "New workspace" &&
