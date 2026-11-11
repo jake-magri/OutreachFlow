@@ -9,8 +9,19 @@ using OutreachFlow.Data;
 using OutreachFlow.Services;
 using OutreachFlow.Services.Research;
 using OutreachFlow.Services.Discovery;
+using OutreachFlow.Services.Mailbox;
+using Microsoft.AspNetCore.DataProtection;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// Store local OAuth state and encrypted refresh-token keys outside the repository.
+// On Windows, protect the key ring with current-user DPAPI. Linux CI runs only
+// offline fixtures: Gmail connection deliberately remains unavailable there.
+var mailboxKeys = Path.Combine(builder.Environment.ContentRootPath, "mailbox-keys");
+var protection = builder.Services.AddDataProtection()
+    .SetApplicationName("OutreachFlow.Mailbox.v1")
+    .PersistKeysToFileSystem(new DirectoryInfo(mailboxKeys));
+if (OperatingSystem.IsWindows()) protection.ProtectKeysWithDpapi();
 
 builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents();
@@ -54,6 +65,20 @@ builder.Services.AddHttpClient<IWebSearchProvider, TavilySearchProvider>(client 
     AllowAutoRedirect = false,
     UseProxy = false
 });
+builder.Services.AddSingleton(sp => new GmailConnectionStore(
+    Path.Combine(builder.Environment.ContentRootPath, "mailbox-connections"),
+    sp.GetRequiredService<IDataProtectionProvider>()));
+builder.Services.AddHttpClient("GmailOAuth", client => client.Timeout = TimeSpan.FromSeconds(15))
+    .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+    {
+        AllowAutoRedirect = false, UseProxy = false
+    });
+builder.Services.AddHttpClient("GmailApi", client => client.Timeout = TimeSpan.FromSeconds(15))
+    .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+    {
+        AllowAutoRedirect = false, UseProxy = false
+    });
+builder.Services.AddScoped<GmailMailboxService>();
 builder.Services.AddScoped<OpportunityDiscoveryService>();
 builder.Services.AddScoped<OutreachService>();
 builder.Services.AddSingleton<IHtmlBrowserRenderer, PlaywrightHtmlBrowserRenderer>();
@@ -97,6 +122,7 @@ using (var scope = app.Services.CreateScope())
 }
 
 app.MapOutreachAccounts();
+app.MapGmailMailboxEndpoints();
 
 // Local export of pipeline metadata (not email content).
 app.MapGet("/export/prospects.csv", async (OutreachService service) =>
