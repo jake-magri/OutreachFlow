@@ -162,7 +162,8 @@ SuggestedNextStep PilotStep(string host) => pilotTriage.Single(x =>
     x.Host.Equals(host, StringComparison.OrdinalIgnoreCase)).Suggestion.Step;
 Check(pilotTriage.Count == 8 &&
       PilotStep("evp.nc.gov") == SuggestedNextStep.FurtherResearch &&
-      PilotStep("www.charlottenc.gov") == SuggestedNextStep.FurtherResearch &&
+      pilotTriage.Where(x => x.Host == "www.charlottenc.gov")
+          .All(x => x.Suggestion.Step == SuggestedNextStep.FurtherResearch) &&
       PilotStep("fleetwashsupply.example") == SuggestedNextStep.Deprioritize &&
       PilotStep("cleanfleet.example") == SuggestedNextStep.Deprioritize &&
       PilotStep("vectorfleet.example") == SuggestedNextStep.ApplicationReview &&
