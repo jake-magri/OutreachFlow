@@ -11,6 +11,7 @@ using OutreachFlow.Services;
 using OutreachFlow.Services.Research;
 using OutreachFlow.Services.Discovery;
 using OutreachFlow.Services.Mailbox;
+using OutreachFlow.Services.Persistence;
 using Microsoft.AspNetCore.DataProtection;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -142,10 +143,10 @@ using (var scope = app.Services.CreateScope())
     await using var db = await factory.CreateDbContextAsync();
     // Preserve existing business data. New users' workspaces are provisioned
     // only during first-owner setup or Google-first registration, not at startup.
-    await db.Database.EnsureCreatedAsync();
+    await StartupDatabase.InitializeAsync(db);
     var authFactory = scope.ServiceProvider.GetRequiredService<IDbContextFactory<AccountDbContext>>();
     await using var authDb = await authFactory.CreateDbContextAsync();
-    await authDb.Database.EnsureCreatedAsync(); // Separate local auth database; migrations are a follow-up.
+    await StartupDatabase.InitializeAsync(authDb);
 }
 
 app.MapOutreachAccounts();
