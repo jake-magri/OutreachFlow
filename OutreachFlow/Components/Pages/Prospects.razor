@@ -1,5 +1,10 @@
 @page "/prospects"
 @inject OutreachService Flow
+@inject BatchInquiryService Batches
+@inject GmailMailboxService Gmail
+@inject AuthenticationStateProvider Authentication
+@using OutreachFlow.Services.Mailbox
+@using Microsoft.AspNetCore.Components.Authorization
 @using OutreachFlow.Services.Mailbox
 @using Microsoft.AspNetCore.Components.Authorization
 @inject BatchInquiryService Batches
@@ -37,6 +42,62 @@
         }
     }
 </section>
+<section class="panel spaced" data-testid="batch-inquiries">
+    <div class="panel-heading"><h2>Import → draft → inquiry</h2><small>1–3 prospects per batch</small></div>
+    <p>Paste <code>Company | Site/branch | https://company-website | Business email</code>.
+        One simulated run prepares the draft, records the initial attempt, and updates the prospect automatically.
+        No external requests or emails are made in simulation.</p>
+    <textarea class="textarea" rows="4" aria-label="Batch prospect import string"
+        placeholder="Fixture Company | South Charlotte | https://example.org | buyer@example.org"
+        @bind="batchInput" @bind:event="oninput" @bind:after="ResetBatchReview"></textarea>
+    <div class="actions">
+        <button class="button primary" disabled="@busy" @onclick="() => ExecuteBatch(BatchInquiryMode.Simulated)">Run simulated batch</button>
+        @if (Gmail.SendingAvailable)
+        {
+            <button class="button" disabled="@busy" @onclick="PreviewLiveBatch">Review live Gmail batch</button>
+        }
+    </div>
+    @if (Gmail.SendingAvailable && livePreview is not null)
+    {
+        <section class="panel spaced" aria-label="Exact live batch preview">
+            <h3>Review the exact Gmail inquiries</h3>
+            <p><strong>From:</strong> @livePreview.From</p>
+            @foreach (var line in livePreview.Lines)
+            {
+                <div class="evidence">
+                    <strong>@line.Company</strong>
+                    <p><strong>To:</strong> @line.To</p>
+                    <p><strong>Subject:</strong> @line.Subject</p>
+                    <pre style="white-space:pre-wrap;overflow-wrap:anywhere">@line.Body</pre>
+                </div>
+            }
+            <label class="checkbox"><input type="checkbox" @bind="batchApproved" />
+                I checked each company's official process, verified the intended business recipient,
+                and approve only the exact inquiries shown above.</label>
+            <button class="button primary" disabled="@(busy || !batchApproved)"
+                @onclick="() => ExecuteBatch(BatchInquiryMode.Gmail)">Send approved batch with Gmail</button>
+            <p class="help">At most three initial inquiries. Existing Gmail approvals, sending hours,
+                quotas, suppression and no-retry rules still apply. No follow-up automation is enabled.</p>
+        </section>
+    }
+    @else if (!Gmail.SendingAvailable)
+    {
+        <p class="help">Live Gmail sending is currently disabled. This form is ready for offline test runs;
+            Gmail must be separately authorized and enabled for explicit real batches.</p>
+    }
+    @if (!string.IsNullOrWhiteSpace(batchNotice)) { <p class="notice" role="status">@batchNotice</p> }
+    @if (batchResult is not null)
+    {
+        <p><strong>Simulated:</strong> @batchResult.Simulated · <strong>Gmail accepted:</strong>
+            @batchResult.Sent · <strong>Held:</strong> @batchResult.Held · <strong>Skipped:</strong> @batchResult.Skipped</p>
+        @foreach (var outcome in batchResult.Outcomes)
+        {
+            <p><strong>@outcome.Company:</strong> @outcome.Result
+                @if (outcome.ProspectId is int id) { <a href="@($"/prospects/{id}")">View history</a> }
+            </p>
+        }
+    }
+</section>
 <section class="panel spaced">
     <div class="panel-heading"><h2>Import prospects</h2><small>One prospect per line</small></div>
     <p>Format: <code>Company | Site/branch | Website | Business email</code>. Existing company/site pairs are skipped.</p>
@@ -58,6 +119,40 @@
 </section>
 @code {
     private List<Prospect>? prospects;
+    private string batchInput = "";
+    private string batchNotice = "";
+    private BatchInquiryPreview? livePreview;
+    private BatchInquiryResult? batchResult;
+    private bool batchApproved;
+    private void ResetBatchReview() { livePreview = null; batchApproved = false; batchResult = null; batchNotice = ""; }
+    private async Task PreviewLiveBatch()
+    {
+        if (busy) return;
+        busy = true;
+        try
+        {
+            livePreview = await Batches.PreviewAsync((await Authentication.GetAuthenticationStateAsync()).User, batchInput);
+            batchApproved = false; batchNotice = "";
+        }
+        catch (Exception ex) { livePreview = null; batchNotice = ex.Message; }
+        finally { busy = false; }
+    }
+    private async Task ExecuteBatch(BatchInquiryMode mode)
+    {
+        if (busy) return;
+        busy = true; batchResult = null; batchNotice = "";
+        try
+        {
+            var user = (await Authentication.GetAuthenticationStateAsync()).User;
+            batchResult = await Batches.RunAsync(user, batchInput, mode,
+                mode == BatchInquiryMode.Gmail && batchApproved, livePreview?.Hash);
+            batchNotice = "Batch completed. Repeating the same import will skip existing recipients.";
+            livePreview = null; batchApproved = false;
+            prospects = await Flow.ListProspectsAsync();
+        }
+        catch (Exception ex) { batchNotice = ex.Message; }
+        finally { busy = false; }
+    }
     private string batchInput = "";
     private string batchMode = "Simulated";
     private bool batchApproved;
