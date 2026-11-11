@@ -1,5 +1,7 @@
 # Real lead pilot — owner-confirmed outreach (development)
 
+> **Historical PR #2 pilot notes.** PR #2 and PR #11 are now merged. Gmail can be connected read-only for owner-reviewed replies; the statement below that no mailbox connection exists refers to the original PR #2 phase. No live mail sender is currently implemented. See [README.md](README.md).
+
 This branch intentionally keeps the temporary local SQLite databases and avoids schema migrations while the business outreach flow is tested with 5–10 genuine prospects.
 
 ## Happy path

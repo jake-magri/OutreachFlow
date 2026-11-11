@@ -1,5 +1,7 @@
 # OutreachFlow — website research increment
 
+> **Historical development instructions.** This document describes the pre-Identity/pre-Gmail research prototype and contains now-obsolete claims about being unauthenticated. Follow [README.md](README.md) and [ROADMAP.md](ROADMAP.md) for the current merged architecture.
+
 ## Apply the update to the solution that already builds
 
 Your Visual Studio solution root is the directory containing `OutreachFlow.slnx`, the `OutreachFlow/` web project, and the `OutreachFlow.SmokeTests/` test project.

@@ -1,4 +1,6 @@
-# Multi-workspace identity foundation (development preview)
+# Multi-workspace identity foundation (historical development preview)
+
+> **Historical PR #1 setup notes.** This identity foundation is merged; Google sign-in, Google-first private workspaces and a read-only Gmail pilot were added later. See [README.md](README.md) for current startup and [ROADMAP.md](ROADMAP.md) for production gaps.
 
 This branch begins the user-account and workspace-isolation work without rewriting your existing `outreachflow.db`.
 

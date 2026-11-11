@@ -281,7 +281,8 @@ public sealed class OutreachService(IDbContextFactory<OutreachDbContext> factory
         await using var db = await factory.CreateDbContextAsync();
         var workspaceId = await access.ActiveWorkspaceIdAsync();
         var p = await db.Prospects.SingleAsync(x => x.Id == id && x.WorkspaceId == workspaceId);
-        if (p.Status == ProspectStatus.Suppressed) throw new InvalidOperationException("Suppressed prospects cannot be reactivated by research.");
+        if (p.Status is ProspectStatus.Suppressed or ProspectStatus.Closed)
+            throw new InvalidOperationException("Suppressed or closed prospects cannot be reactivated by research.");
         if (p.Attempts > 0 || p.AutomationPaused)
             throw new InvalidOperationException("Research changes after outreach or human takeover require a separate audited review workflow.");
         if ((outcome == ResearchOutcome.ApplicationPortal || outcome == ResearchOutcome.EmailInstructions)
@@ -346,7 +347,7 @@ public sealed class OutreachService(IDbContextFactory<OutreachDbContext> factory
         p.SequenceTimeZoneId = settings.TimeZoneId;
         p.SequenceStartHour = settings.SendingStartHour;
         p.Status = ProspectStatus.AwaitingReply;
-        p.AutomationPaused = true; // An external mailbox is not connected; automation must not send.
+        p.AutomationPaused = true; // Manually attested delivery; unattended Gmail sending is not implemented.
         p.NextStepDueUtc = null;
         p.NextActionDate = DateOnly.FromDateTime(TimeZoneInfo.ConvertTimeFromUtc(
             BusinessCalendar.AddBusinessDays(now, settings.FirstFollowupBusinessDays,
@@ -473,7 +474,10 @@ public sealed class OutreachService(IDbContextFactory<OutreachDbContext> factory
         var workspaceId = await access.ActiveWorkspaceIdAsync();
         var p = await db.Prospects.SingleAsync(x => x.Id == id && x.WorkspaceId == workspaceId);
         if (p.Attempts == 0) throw new InvalidOperationException("Simulate an initial message before a reply.");
-        if (p.Status == ProspectStatus.Suppressed) throw new InvalidOperationException("This recipient is suppressed.");
+        if (p.Status is ProspectStatus.Suppressed or ProspectStatus.Closed)
+            throw new InvalidOperationException("Closed or suppressed prospects cannot be reopened by simulated replies.");
+        if (await db.Messages.AnyAsync(m => m.ProspectId == id && !m.IsSimulation))
+            throw new InvalidOperationException("Actual message history must not be changed by a simulated reply.");
         db.Messages.Add(new OutreachMessage { ProspectId = id, Direction = "Inbound", Classification = category.ToString(), Body = body.Trim() });
         p.Status = category switch
         {
@@ -496,9 +500,9 @@ public sealed class OutreachService(IDbContextFactory<OutreachDbContext> factory
         await using var db = await factory.CreateDbContextAsync();
         var workspaceId = await access.ActiveWorkspaceIdAsync();
         var p = await db.Prospects.SingleAsync(x => x.Id == id && x.WorkspaceId == workspaceId);
-        if (p.Status == ProspectStatus.Suppressed &&
+        if ((p.Status is ProspectStatus.Suppressed or ProspectStatus.Closed) &&
             (activityType != "Internal note" || !string.IsNullOrWhiteSpace(nextAction) || nextDate.HasValue))
-            throw new InvalidOperationException("Suppressed prospects accept only internal notes, not outreach or next-contact tasks.");
+            throw new InvalidOperationException("Closed or suppressed prospects accept only internal notes, not outreach or next-contact tasks.");
         p.AutomationPaused = true;
         p.NextStepDueUtc = null;
         p.NextAction = nextAction.Trim();

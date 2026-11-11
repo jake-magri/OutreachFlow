@@ -1,4 +1,6 @@
-# PR #7 — deterministic opportunity discovery pilot
+# Historical PR #7 — deterministic opportunity discovery pilot
+
+> **Historical implementation benchmark.** PR #7 and later triage refinements are merged; the current Discover screen includes deterministic review groups and manual routing. See [README.md](README.md) and [TRIAGE-PILOT.md](TRIAGE-PILOT.md).
 
 ## Research questions
 

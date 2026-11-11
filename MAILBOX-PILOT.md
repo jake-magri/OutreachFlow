@@ -1,4 +1,6 @@
-# PR #10 — Google Workspace mailbox pilot (read-only first slice)
+# Historical PR #11 — Google sign-in and read-only Gmail pilot
+
+> **Historical implementation/acceptance notes.** PR #11 is merged. Google sign-in and Gmail connection were reported working in the November 11 local pilot; **end-to-end actual reply import has not yet been verified**. Current status and exit gates: [ROADMAP.md](ROADMAP.md) and [AUDIT-2026-11-11.md](AUDIT-2026-11-11.md).
 
 ## Purpose and security boundary
 

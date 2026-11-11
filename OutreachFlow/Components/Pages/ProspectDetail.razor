@@ -233,7 +233,7 @@ else
     private async Task Reload() => details = await Flow.GetDetailsAsync(Id);
     private async Task Execute(Func<Task> action)
     {
-        try { await action(); alert = "Saved. Local simulation only."; }
+        try { await action(); alert = "Saved locally. OutreachFlow sent no email."; }
         catch (Exception ex) { alert = ex.Message; }
         await Reload();
     }

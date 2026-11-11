@@ -293,11 +293,6 @@ public sealed class GmailMailboxService(IConfiguration config, IHttpClientFactor
     }
 
     /// <summary>
-    /// Only returns inbox entries whose From address matches an existing business
-    /// recipient with a recorded REAL outbound email. Never modifies Gmail labels.
-    /// Returned previews live in the user's interactive session, not in SQLite.
-    /// </summary>
-    /// <summary>
     /// Owner-confirmed import of a single Gmail message. Freshly refetches the source,
     /// revalidates its exact sender and business relationship, then records an actual
     /// reply and audited provider ID in one database transaction. NEVER sends email.
@@ -393,6 +388,11 @@ public sealed class GmailMailboxService(IConfiguration config, IHttpClientFactor
         return true;
     }
 
+    /// <summary>
+    /// Returns only recent candidate replies whose From matches a recorded
+    /// contact with an owner-attested real outbound message. Thread attribution
+    /// is NOT proven; always verify each preview before import.
+    /// </summary>
     public async Task<IReadOnlyList<GmailInboxItem>> ReviewInboxAsync(int workspaceId,
         IDbContextFactory<OutreachDbContext> factory, CancellationToken ct = default)
     {

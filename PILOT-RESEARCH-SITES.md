@@ -1,5 +1,7 @@
 # Diverse real-site research pilot (manual, read-only)
 
+> **Historical real-site research scorecard.** Subsequent PRs implemented on-demand Tavily indexed search and Gmail read-only integration; the statements below that these are absent describe the earlier pilot stage. For current code see [README.md](README.md).
+
 **Purpose:** check whether profile-specific keyword rules surface relevant official process pages and contacts across niches. These links were independently located on November 10, 2026. They are **not** a list of guaranteed contracts, qualified customers or approved outreach recipients. Sites can change; verify each source and its terms before scanning. Do not submit an application, contact anyone, or send real email during this classifier pilot.
 
 ## Instructions

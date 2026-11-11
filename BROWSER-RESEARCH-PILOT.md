@@ -1,4 +1,6 @@
-# PR #6 — experimental browser-render research pilot
+# Historical PR #6 — experimental browser-render research pilot
+
+> **Historical branch instructions.** PR #6 is merged. Keep the browser manually opt-in; the special branch-only CI steps were removed from the standard workflow in audit PR #12. For current tests, see [TEST-CHECKLIST.md](TEST-CHECKLIST.md).
 
 ## Purpose
 
