@@ -41,6 +41,12 @@ Built-in starting profiles include general B2B supplier research, fleet services
 
 Profiles are saved per workspace as **local JSON files** in `research-profiles/workspace-<id>.json`, ignored by Git. This intentionally requires **no EF migration** and does not change either existing SQLite database. Save files along with both SQLite databases when backing up. Invalid/corrupt profile files fail closed rather than silently resetting to defaults.
 
+## Experimental JavaScript-rendered research (PR #6)
+
+The normal **Research company website** action remains unchanged. A separate **Render with browser (experimental)** button can attempt a three-second JavaScript render on pages that returned insufficient HTML content. The browser uses a fresh isolated context and same-site, GET-only resource interception routed through the existing protected C# fetcher. It is deliberately not an anti-bot bypass; blocked/challenge pages remain manual review.
+
+Local Chromium installation is required. See [BROWSER-RESEARCH-PILOT.md](BROWSER-RESEARCH-PILOT.md) for Windows setup, comparison tests, security limits and the City of Charlotte supplier-registration pilot. No new SQLite tables or AWS resources are introduced.
+
 ## Run locally
 
 Prerequisites: .NET 10 SDK, Git, and Windows/Visual Studio or another supported .NET environment.

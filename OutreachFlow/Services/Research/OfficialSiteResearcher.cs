@@ -10,14 +10,16 @@ namespace OutreachFlow.Services.Research;
 /// Read-only, deliberately narrow HTML discovery of the submitted company website.
 /// No external search engine, PDF parsing, browser scripts, form submission or email.
 /// </summary>
-public sealed class OfficialSiteResearcher : ICompanyResearcher, IDisposable
+public sealed class OfficialSiteResearcher : IBrowserCompanyResearcher, IDisposable
 {
     private const int MaxPages = 6;
     private const int MaxBytes = 300_000;
     private readonly HttpClient client;
+    private readonly IHtmlBrowserRenderer? renderer;
 
-    public OfficialSiteResearcher()
+    public OfficialSiteResearcher(IHtmlBrowserRenderer? renderer = null)
     {
+        this.renderer = renderer;
         var handler = new SocketsHttpHandler
         {
             AllowAutoRedirect = false,
@@ -59,8 +61,17 @@ public sealed class OfficialSiteResearcher : ICompanyResearcher, IDisposable
     public Task<ResearchScan> SearchAsync(string website, CancellationToken cancellationToken = default)
         => SearchAsync(website, ResearchProfileCatalog.Default(), cancellationToken);
 
-    public async Task<ResearchScan> SearchAsync(string website, ResearchProfile profile, CancellationToken cancellationToken = default)
+    public Task<ResearchScan> SearchAsync(string website, ResearchProfile profile, CancellationToken cancellationToken = default)
+        => SearchCoreAsync(website, profile, useBrowser: false, cancellationToken);
+
+    public Task<ResearchScan> SearchWithBrowserAsync(string website, ResearchProfile profile, CancellationToken cancellationToken = default)
+        => SearchCoreAsync(website, profile, useBrowser: true, cancellationToken);
+
+    private async Task<ResearchScan> SearchCoreAsync(string website, ResearchProfile profile,
+        bool useBrowser, CancellationToken cancellationToken)
     {
+        if (useBrowser && renderer is null)
+            throw new InvalidOperationException("Experimental browser rendering is not configured.");
         profile = ResearchProfile.Validate(profile);
         var root = ResearchUrlPolicy.ParseWebsite(website);
         var robotsUrl = new Uri(root.GetLeftPart(UriPartial.Authority) + "/robots.txt");
@@ -91,6 +102,8 @@ public sealed class OfficialSiteResearcher : ICompanyResearcher, IDisposable
         var contacts = new Dictionary<string, ResearchContact>(StringComparer.OrdinalIgnoreCase);
         var diagnostics = new List<ResearchPageDiagnostic>();
         int skippedPages = 0;
+        int browserAttempts = 0;
+        int browserImproved = 0;
         var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var queue = new Queue<Uri>();
         queue.Enqueue(root);
@@ -112,10 +125,72 @@ public sealed class OfficialSiteResearcher : ICompanyResearcher, IDisposable
             if (page.StatusCode != HttpStatusCode.OK || !page.IsHtml)
             {
                 skippedPages++;
+                diagnostics.Add(new ResearchPageDiagnostic(
+                    page.Url.AbsoluteUri, "(HTTP response unavailable)", 0, [], 
+                    "The server did not return a usable HTTP 200 HTML page.")
+                {
+                    HttpStatusCode = (int)page.StatusCode,
+                    InitialRuleId = page.IsHtml ? "http-status" : "http-status-or-media-type",
+                    BrowserDecision = useBrowser
+                        ? "Skipped: no approved HTML to render"
+                        : "Not requested"
+                });
                 continue;
             }
             pages.Add(page.Url.AbsoluteUri);
-            var diagnostic = ResearchPageInspector.Inspect(page.Url, page.Content, profile);
+            var diagnostic = ResearchPageInspector.Inspect(page.Url, page.Content, profile)
+                with { HttpStatusCode = (int)page.StatusCode };
+            if (useBrowser)
+            {
+                if (diagnostic.IsChallenge)
+                {
+                    diagnostic = diagnostic with { BrowserDecision =
+                        "Skipped: access-challenge rule " + diagnostic.InitialRuleId +
+                        " matched phrase '" + diagnostic.MatchedPhrase + "'" };
+                }
+                else if (!BrowserResearchPolicy.MayRender(diagnostic))
+                {
+                    diagnostic = diagnostic with { BrowserDecision =
+                        "Skipped: original HTML did not require rendering" };
+                }
+                else
+                {
+                    browserAttempts++;
+                    diagnostic = diagnostic with { BrowserDecision = "Attempted" };
+                    try
+                    {
+                        var rendered = await renderer!.RenderAsync(root, page.Url,
+                            (target, token) => DownloadBrowserResourceAsync(root, target, robots, token),
+                            cancellationToken);
+                        var revised = ResearchPageInspector.Inspect(page.Url, rendered.Html, profile);
+                        if (!revised.IsInconclusive)
+                        {
+                            browserImproved++;
+                            page = page with { Content = rendered.Html };
+                            diagnostic = revised with
+                            {
+                                HttpStatusCode = (int)page.StatusCode,
+                                BrowserDecision = "Rendered meaningful HTML; original rule: " + diagnostic.InitialRuleId + ". " + RenderResourceSummary(rendered)
+                            };
+                        }
+                        else
+                        {
+                            diagnostic = diagnostic with { Warning = diagnostic.Warning +
+                                " Browser-rendered HTML was still inconclusive.",
+                                BrowserDecision = "Attempted; rendered result still inconclusive (" +
+                                    revised.InitialRuleId + "). " + RenderResourceSummary(rendered) };
+                        }
+                    }
+                    catch (Exception ex) when (!cancellationToken.IsCancellationRequested &&
+                        ex is InvalidOperationException or IOException or TimeoutException or
+                            OperationCanceledException or Microsoft.Playwright.PlaywrightException)
+                    {
+                        diagnostic = diagnostic with { Warning = diagnostic.Warning +
+                            " Browser rendering unavailable or incomplete; verify manually.",
+                            BrowserDecision = "Attempted; failed (" + ex.GetType().Name + ")" };
+                    }
+                }
+            }
             diagnostics.Add(diagnostic);
             if (diagnostic.IsInconclusive)
             {
@@ -151,9 +226,10 @@ public sealed class OfficialSiteResearcher : ICompanyResearcher, IDisposable
                     candidates[key] = new ResearchCandidate("Link: " + Shorten(anchor, 100), key, detail);
             }
         }
-        if (pages.Count == 0)
+        if (pages.Count == 0 && diagnostics.Count == 0)
             throw new InvalidOperationException("No accessible HTML pages were retrieved (blocked, JavaScript-only, or incompatible site). Nothing was concluded.");
         var note = $"Checked {pages.Count} same-site HTML page(s), max {MaxPages}. " +
+                   $"Experimental browser attempts: {browserAttempts}, meaningful rendered pages: {browserImproved}. " +
                    "Links are suggestions, not proof of an accepted supplier process. " +
                    "PDFs, third-party portals, dynamic pages and search-engine results were not inspected. " +
                    "Do not mark 'No process found' without additional manual checking.";
@@ -174,6 +250,56 @@ public sealed class OfficialSiteResearcher : ICompanyResearcher, IDisposable
             PageDiagnostics = diagnostics
         };
     }
+
+    private static string RenderResourceSummary(BrowserRenderResult result) =>
+        $"Network: fulfilled={result.FulfilledRequests}, blocked={result.BlockedRequests}, " +
+        $"blocked scripts={result.BlockedScriptRequests}, unsupported={result.UnsupportedRequests}, failed={result.FailedRequests}.";
+
+    /// <summary>
+    /// Diagnostic-only probe using the SAME protected downloader and user-agent as normal scans.
+    /// No cookies or complete HTML are exposed. Called only by an opt-in developer test.
+    /// </summary>
+    public async Task<PublicPageProbe> ProbeAsync(string website, CancellationToken ct = default)
+    {
+        var root = ResearchUrlPolicy.ParseWebsite(website);
+        var robotsUrl = new Uri(root.GetLeftPart(UriPartial.Authority) + "/robots.txt");
+        var robotsResponse = await DownloadAsync(root, robotsUrl, ct);
+        var robots = robotsResponse.StatusCode == HttpStatusCode.NotFound ? "" :
+            robotsResponse.StatusCode == HttpStatusCode.OK && !robotsResponse.IsHtml
+                ? robotsResponse.Content
+                : throw new InvalidOperationException("Probe stopped: robots.txt could not be verified.");
+        if (!RobotsAllow(robots, root))
+            throw new InvalidOperationException("Probe stopped: robots.txt excludes the requested page.");
+        var page = await DownloadAsync(root, root, ct, robots);
+        var html = page.Content;
+        var visible = Regex.Replace(
+            Regex.Replace(html, "<(script|style|noscript)\\b[^>]*>[\\s\\S]*?</\\1>", " ",
+                RegexOptions.IgnoreCase, TimeSpan.FromMilliseconds(200)),
+            "<[^>]*>", " ", RegexOptions.Singleline, TimeSpan.FromMilliseconds(200));
+        visible = Regex.Replace(WebUtility.HtmlDecode(visible), "\\s+", " ",
+            RegexOptions.None, TimeSpan.FromMilliseconds(200)).Trim();
+        var scriptTagCount = Regex.Matches(html, "<script\\b", RegexOptions.IgnoreCase,
+            TimeSpan.FromMilliseconds(200)).Count;
+        var scriptSrcs = Regex.Matches(html,
+            "<script\\b[^>]*\\bsrc\\s*=\\s*['\\\"](?<src>[^'\\\"]+)['\\\"]",
+            RegexOptions.IgnoreCase, TimeSpan.FromMilliseconds(200));
+        var externalScriptCount = 0;
+        var sameSiteScriptCount = 0;
+        foreach (Match m in scriptSrcs)
+        {
+            if (!Uri.TryCreate(page.Url, WebUtility.HtmlDecode(m.Groups["src"].Value),
+                out var src)) continue;
+            if (ResearchUrlPolicy.IsSameSite(root, src)) sameSiteScriptCount++;
+            else externalScriptCount++;
+        }
+        return new PublicPageProbe((int)page.StatusCode, page.IsHtml, html.Length,
+            ExtractTitle(html), visible[..Math.Min(240, visible.Length)], scriptTagCount,
+            sameSiteScriptCount, externalScriptCount);
+    }
+
+    public sealed record PublicPageProbe(int HttpStatus, bool IsHtml, int HtmlCharacters,
+        string Title, string ReadableTextPreview, int ScriptTags,
+        int SameSiteScriptSources, int CrossSiteScriptSources);
 
     private sealed record PageResponse(Uri Url, HttpStatusCode StatusCode, bool IsHtml, string Content);
 
@@ -216,6 +342,48 @@ public sealed class OfficialSiteResearcher : ICompanyResearcher, IDisposable
             return new PageResponse(target, response.StatusCode, html, Encoding.UTF8.GetString(memory.ToArray()));
         }
         throw new InvalidOperationException("Too many redirects; research stopped for this page.");
+    }
+
+    // Browser network requests are resolved ONLY through this existing SSRF-hardened client.
+    // The read-only browser is never allowed to fetch directly or access external hosts.
+    private async Task<BrowserResource> DownloadBrowserResourceAsync(
+        Uri root, Uri target, string robots, CancellationToken ct)
+    {
+        const int resourceLimit = 150_000;
+        for (var redirects = 0; redirects <= 2; redirects++)
+        {
+            if (!ResearchUrlPolicy.IsSameSite(root, target) || !RobotsAllow(robots, target))
+                throw new InvalidOperationException("Browser resource redirected outside approved scope or robots rules.");
+            using var request = new HttpRequestMessage(HttpMethod.Get, target);
+            using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
+            if ((int)response.StatusCode is >= 300 and <= 399)
+            {
+                if (response.Headers.Location is not Uri location)
+                    throw new InvalidOperationException("Browser resource redirect has no destination.");
+                target = location.IsAbsoluteUri ? location : new Uri(target, location);
+                continue;
+            }
+            var mediaType = response.Content.Headers.ContentType?.MediaType ?? "";
+            if (!BrowserResearchPolicy.AllowMediaType(mediaType))
+                throw new InvalidOperationException("Browser resource content type is not permitted.");
+            if (response.Content.Headers.ContentLength > resourceLimit)
+                throw new InvalidOperationException("Browser resource exceeds size limit.");
+            await using var stream = await response.Content.ReadAsStreamAsync(ct);
+            using var buffer = new MemoryStream();
+            var chunk = new byte[8192];
+            while (true)
+            {
+                var remaining = resourceLimit + 1 - (int)buffer.Length;
+                var read = await stream.ReadAsync(chunk.AsMemory(0, Math.Min(chunk.Length, remaining)), ct);
+                if (read == 0) break;
+                buffer.Write(chunk, 0, read);
+                if (buffer.Length > resourceLimit)
+                    throw new InvalidOperationException("Browser resource exceeded size limit.");
+            }
+            return new BrowserResource((int)response.StatusCode, mediaType,
+                Encoding.UTF8.GetString(buffer.ToArray()));
+        }
+        throw new InvalidOperationException("Browser resource redirected too many times.");
     }
 
     internal static bool RobotsAllow(string text, Uri uri)

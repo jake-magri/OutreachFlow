@@ -17,10 +17,28 @@ else
             <div class="scan-box">
                 <p><strong>Company website:</strong> @p.Website</p>
                 <button class="button" @onclick="ScanWebsite" disabled="@scanning">@(scanning ? "Checking public site…" : "Research company website")</button>
-                <small>Read-only · max 6 same-site HTML pages · no logins, forms, PDFs or external portals · no email</small>
+                <button class="button" @onclick="ScanWebsiteBrowser" disabled="@scanning">@(scanning ? "Research in progress…" : "Render with browser (experimental)")</button>
+                <small>Read-only · max 6 same-site HTML pages · no logins, forms, PDFs or external portals · no email. Browser experiment requires locally installed Chromium and may still be blocked.</small>
                 @if (!string.IsNullOrWhiteSpace(scanSummary))
                 {
                     <div class="notice">@scanSummary</div>
+                }
+                @if (lastScanDiagnostics.Count > 0)
+                {
+                    <h3>Latest page diagnostics</h3>
+                    @foreach (var d in lastScanDiagnostics)
+                    {
+                        <div class="evidence">
+                            <strong>@d.Title</strong>
+                            <p><small>HTTP @d.HttpStatusCode · @d.VisibleCharacters readable characters · Rule: @d.InitialRuleId</small></p>
+                            @if (!string.IsNullOrWhiteSpace(d.MatchedPhrase))
+                            {
+                                <p>Matched challenge phrase: <strong>@d.MatchedPhrase</strong></p>
+                            }
+                            <p>Browser: @d.BrowserDecision</p>
+                            @if (d.IsInconclusive) { <p>@d.Warning</p> }
+                        </div>
+                    }
                 }
                 <p class="help">All automatic discoveries are unverified. A contact or possible portal does not authorize sending; inspect the source, verify relevance, and explicitly approve the recipient and process decision.</p>
             </div>
@@ -189,6 +207,7 @@ else
     private bool researchOfficial;
     private bool scanning;
     private string scanSummary = "";
+    private List<OutreachFlow.Services.Research.ResearchPageDiagnostic> lastScanDiagnostics = [];
     private ReplyCategory replyCategory = ReplyCategory.Interested;
     private string replyText = "";
     private ReplyCategory actualReplyCategory = ReplyCategory.Interested;
@@ -216,17 +235,26 @@ else
         catch (Exception ex) { alert = ex.Message; }
         await Reload();
     }
-    private async Task ScanWebsite()
+    private Task ScanWebsite() => ScanWebsiteCore(useBrowser: false);
+    private Task ScanWebsiteBrowser() => ScanWebsiteCore(useBrowser: true);
+
+    private async Task ScanWebsiteCore(bool useBrowser)
     {
         scanning = true;
         alert = "";
         scanSummary = "";
+        lastScanDiagnostics = [];
         await InvokeAsync(StateHasChanged);
         try
         {
-            var scan = await Flow.ResearchCompanyAsync(Id);
+            var scan = useBrowser
+                ? await Flow.ResearchCompanyWithBrowserAsync(Id)
+                : await Flow.ResearchCompanyAsync(Id);
+            lastScanDiagnostics = scan.PageDiagnostics.ToList();
             scanSummary = $"Fetched {scan.PagesChecked.Count} HTML page(s); {scan.PageDiagnostics.Count(x => x.IsInconclusive)} returned insufficient or suspicious content. Found {scan.Candidates.Count} possible reference(s) and {scan.Contacts.Count} published email candidate(s). {scan.SuggestedReview} {scan.Limitations}";
-            alert = "Website scan saved. Review each reference before confirming a research outcome.";
+            alert = useBrowser
+                ? "Experimental browser scan saved. Check warnings and verify sources; no process or contact is approved."
+                : "Website scan saved. Review each reference before confirming a research outcome.";
         }
         catch (Exception ex) { alert = "Research could not finish: " + ex.Message; }
         finally

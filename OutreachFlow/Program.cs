@@ -43,6 +43,7 @@ builder.Services.AddDbContextFactory<OutreachDbContext>(options =>
 builder.Services.AddSingleton<IResearchProfileStore>(_ =>
     new JsonResearchProfileStore(Path.Combine(builder.Environment.ContentRootPath, "research-profiles")));
 builder.Services.AddScoped<OutreachService>();
+builder.Services.AddSingleton<IHtmlBrowserRenderer, PlaywrightHtmlBrowserRenderer>();
 builder.Services.AddSingleton<ICompanyResearcher, OfficialSiteResearcher>();
 builder.Services.AddSingleton<IOutboundEmail, DryRunEmail>();
 

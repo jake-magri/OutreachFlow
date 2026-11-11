@@ -22,6 +22,98 @@ static async Task MustReject(Func<Task> action, string scenario)
     throw new Exception($"FAILED: {scenario}");
 }
 
+// Explicit developer-only live probe: same downloader, user-agent, redirect/robots rules
+// as the app. Logs only bounded public page metadata, not full HTML or script URLs.
+if (Environment.GetEnvironmentVariable("OUTREACHFLOW_LIVE_CITY_PROBE") == "1")
+{
+    const string cityUrl =
+        "https://www.charlottenc.gov/Growth-and-Development/Doing-Business/Supplier-Registration";
+    try
+    {
+        using var liveResearcher = new OfficialSiteResearcher();
+        var liveProbe = await liveResearcher.ProbeAsync(cityUrl);
+        Console.WriteLine("LIVE CITY HTTP PROBE: " +
+            System.Text.Json.JsonSerializer.Serialize(liveProbe));
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine("LIVE CITY HTTP PROBE INCONCLUSIVE: " +
+            ex.GetType().Name + "; " + ex.Message[..Math.Min(ex.Message.Length, 180)]);
+    }
+}
+
+// Browser-render path is explicitly opt-in and must never follow unsafe destinations.
+var browserRoot = new Uri("https://www.example.org/");
+Check(BrowserResearchPolicy.AllowResource(browserRoot,
+    "https://www.example.org/supplier-registration", "GET"),
+    "browser policy permits same-site read-only document requests");
+Check(!BrowserResearchPolicy.AllowResource(browserRoot,
+    "http://127.0.0.1/secret", "GET") &&
+    !BrowserResearchPolicy.AllowResource(browserRoot,
+    "https://api.example.org/private", "GET") &&
+    !BrowserResearchPolicy.AllowResource(browserRoot,
+    "https://www.example.org/apply", "POST") &&
+    !BrowserResearchPolicy.AllowResource(browserRoot,
+    "file:///etc/passwd", "GET") &&
+    !BrowserResearchPolicy.AllowResource(browserRoot,
+    "https://user:pass@www.example.org/", "GET"),
+    "browser policy blocks other hosts, credentials, local files and mutating methods");
+Check(!BrowserResearchPolicy.AllowMediaType("application/octet-stream") &&
+    BrowserResearchPolicy.AllowMediaType("text/html") &&
+    BrowserResearchPolicy.AllowMediaType("application/javascript"),
+    "browser policy limits proxy content to textual resources");
+var renderableShell = new ResearchPageDiagnostic(browserRoot.AbsoluteUri,
+    "Supplier registration", 40, Array.Empty<string>(),
+    "The returned HTML has very little readable text (possibly a JavaScript-only shell).");
+var blockedPage = ResearchPageInspector.Inspect(
+    new Uri("https://www.example.org/supplier-registration"),
+    "<html><head><title>Just a moment...</title></head>" +
+    "<body>Please wait while we check your browser.</body></html>",
+    ResearchProfileCatalog.Default());
+var introBlocked = ResearchPageInspector.Inspect(
+    new Uri("https://www.example.org/supplier-registration"),
+    "<html><head><title>Supplier registration</title></head>" +
+    "<body>Verify you are human to proceed.</body></html>",
+    ResearchProfileCatalog.Default());
+Check(BrowserResearchPolicy.MayRender(renderableShell) &&
+    !BrowserResearchPolicy.MayRender(blockedPage) &&
+    !BrowserResearchPolicy.MayRender(introBlocked),
+    "browser experiment attempts JavaScript shells but never retries site access challenges");
+Check(blockedPage.InitialRuleId == "challenge-title" &&
+      blockedPage.MatchedPhrase == "just a moment" &&
+      introBlocked.InitialRuleId == "challenge-intro" &&
+      introBlocked.MatchedPhrase == "verify you are human",
+    "challenge diagnostics specify whether title or body rule matched and its allowlisted phrase");
+Check(blockedPage.HttpStatusCode == 200 &&
+      !blockedPage.MatchedPhrase.Contains("<") &&
+      !introBlocked.MatchedPhrase.Contains("<"),
+    "challenge metadata uses explicit status and sanitized allowlisted rule matches");
+
+// The opt-in browser integration test runs only when Chromium is installed and explicitly enabled.
+if (Environment.GetEnvironmentVariable("OUTREACHFLOW_BROWSER_TESTS") == "1")
+{
+    var expectedContent = "Rendered supplier instructions ready for human review";
+    var fixture = "<html><head><title>Portal</title></head><body>" +
+        "<div id='app'>Loading</div><script>" +
+        "setTimeout(() => { document.getElementById('app').textContent = '" +
+        expectedContent + "'; }, 100);" +
+        "</script></body></html>";
+    var renderer = new PlaywrightHtmlBrowserRenderer();
+    var fetched = 0;
+    var html = await renderer.RenderAsync(browserRoot,
+        new Uri("https://www.example.org/supplier-registration"),
+        (resource, _) =>
+        {
+            fetched++;
+            Check(resource.Host == "www.example.org",
+                "browser resource requests cannot leave the approved host");
+            return Task.FromResult(new BrowserResource(200, "text/html", fixture));
+        });
+    Check(html.Html.Contains(expectedContent, StringComparison.Ordinal) && fetched > 0 &&
+          html.FulfilledRequests > 0 && html.BlockedRequests == 0,
+        "Chromium executes JavaScript and returns rendered HTML through the safe fetch callback");
+}
+
 // New workspaces must never inherit another owner's personal or business contact details.
 var blankWorkspace = new Workspace();
 Check(blankWorkspace.BusinessName == "New workspace" &&
@@ -79,8 +171,10 @@ Check(shell.IsInconclusive && shell.VisibleCharacters < 120,
 var challenge = ResearchPageInspector.Inspect(suspectUri,
     "<html><title>Just a moment...</title><body>Checking your browser before accessing the site. Verify you are human.</body></html>",
     generalResearch);
-Check(challenge.IsInconclusive && challenge.Warning.Contains("challenge", StringComparison.OrdinalIgnoreCase),
-    "HTTP 200 challenge page is classified as incomplete");
+Check(challenge.IsInconclusive && challenge.IsChallenge &&
+      challenge.InitialRuleId == "challenge-title" &&
+      challenge.MatchedPhrase == "just a moment",
+    "HTTP 200 challenge page identifies its exact triggering title rule");
 var realPage = ResearchPageInspector.Inspect(suspectUri,
     "<html><head><title>Supplier Registration</title></head><body><main><h1>Supplier registration</h1>" +
     "<p>Vendors interested in doing business should complete the supplier registration process.</p>" +
