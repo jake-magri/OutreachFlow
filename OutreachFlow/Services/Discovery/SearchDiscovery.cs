@@ -103,13 +103,18 @@ public static class OpportunityRanker
         "subcontractor prequalification", "trade partner registration",
         "procurement opportunities", "bid opportunities", "request for proposal",
         "supplier application", "supplier portal", "electronic vendor portal",
-        "contract opportunities", "open solicitations"
+        "contract opportunities", "open solicitations",
+        "new vendor setup", "vendor setup form", "vendor onboarding",
+        "supplier onboarding", "service provider application"
     ];
     private static readonly string[] SellingGoodsSignals =
     [
         "wholesale", "wholesaler", "distributor", "wholesale supplier",
         "supply company", "pipe supply", "request pricing",
-        "start a quote", "products & services", "product catalog"
+        "start a quote", "products & services", "product catalog",
+        "washing supplies", "wash chemicals", "truck wash chemicals",
+        "cleaning supplies", "authorized dealer", "dealer information",
+        "equipment for sale"
     ];
     private static readonly string[] CommentarySignals =
     [
@@ -119,7 +124,9 @@ public static class OpportunityRanker
     private static readonly string[] JobSignals =
     [
         "job openings", "apply for a job", "apply now", "career opportunities",
-        "open positions", "employment opportunities", "delivery driver jobs"
+        "open positions", "employment opportunities", "delivery driver jobs",
+        "now hiring", "truck washing jobs", "job listings",
+        "jobs in charlotte", "/jobs.html", "/careers", "indeed.com"
     ];
 
     public static IReadOnlyList<OpportunityCandidate> Rank(
@@ -153,7 +160,9 @@ public static class OpportunityRanker
             bool buyer = Any(text, BuyerProcessSignals);
             bool seller = Any(text, SellingGoodsSignals);
             bool commentary = Any(text, CommentarySignals);
-            bool job = Any(text, JobSignals);
+            bool job = Any(text, JobSignals) ||
+                uri.Host.Equals("indeed.com", StringComparison.OrdinalIgnoreCase) ||
+                uri.Host.EndsWith(".indeed.com", StringComparison.OrdinalIgnoreCase);
             // These are explainable *hints*, not company ownership checks or
             // claims about availability. A supplier can also be a buyer.
             var intent = seller && !buyer ? "Selling goods / possible false match" :
