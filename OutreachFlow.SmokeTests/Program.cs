@@ -35,6 +35,7 @@ static async Task MustReject(Func<Task> action, string scenario)
 }
 
 await ApprovedSendTests.RunAsync();
+await BatchInquiryTests.RunAsync();
 await ProviderMessageTests.RunAsync();
 await GmailCorrelationTests.RunAsync();
 
