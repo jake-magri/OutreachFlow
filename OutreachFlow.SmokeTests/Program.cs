@@ -139,19 +139,19 @@ var pilotTriage = OpportunityRanker.Rank(new[]
         "https://www.charlottenc.gov/Growth-and-Development/Doing-Business/Contract-Opportunities",
         "A centralized source for the City's contracting opportunities, including active solicitations")),
     ("fleet", new SearchListing("Semi-Truck & Fleet Washing Supplies in Charlotte, NC",
-        "https://fleetwashsupply.example/pages/charlotte-nc-fleet-washing-supplies",
+        "https://fleetwashsupply.example.org/pages/charlotte-nc-fleet-washing-supplies",
         "Carry our truck wash chemicals and equipment. Authorized dealer information.")),
     ("fleet", new SearchListing("Onsite Fleet Washing Charlotte NC | Commercial Fleet Cleaning",
-        "https://cleanfleet.example/",
+        "https://cleanfleet.example.org/",
         "We are a recurring commercial fleet washing company. We wash trucks and trailers on site.")),
     ("fleet", new SearchListing("New Vendor Setup Form | Vector",
-        "https://vectorfleet.example/new-vendor-setup-form",
+        "https://vectorfleet.example.org/new-vendor-setup-form",
         "New Vendor Setup Form and fleet maintenance program analysis")),
     ("fleet", new SearchListing("Fleet Management - City of Charlotte",
         "https://www.charlottenc.gov/City-Government/Departments/General-Services/Fleet-Management",
         "The Louise Avenue Shop services mostly heavy vehicles and construction equipment")),
     ("fleet", new SearchListing("Citywide Fleet Vehicle Washing, Detailing, and Decontamination",
-        "https://aggregator.example/contract-opportunity/citywide-fleet-vehicle-washing",
+        "https://aggregator.example.org/contract-opportunity/citywide-fleet-vehicle-washing",
         "Citywide Fleet Vehicle Washing and Detailing (269-2026-007) from Charlotte due 9/24/25.")),
     ("fleet", new SearchListing("Now Hiring: 50 Truck Washing Jobs in Charlotte, NC",
         "https://www.indeed.com/q-truck-washing-l-charlotte,-nc-jobs.html",
@@ -166,10 +166,10 @@ Check(pilotTriage.Count == 8 &&
       PilotStep("evp.nc.gov") == SuggestedNextStep.FurtherResearch &&
       pilotTriage.Where(x => x.Host == "www.charlottenc.gov")
           .All(x => x.Suggestion.Step == SuggestedNextStep.FurtherResearch) &&
-      PilotStep("fleetwashsupply.example") == SuggestedNextStep.Deprioritize &&
-      PilotStep("cleanfleet.example") == SuggestedNextStep.Deprioritize &&
-      PilotStep("vectorfleet.example") == SuggestedNextStep.ApplicationReview &&
-      PilotStep("aggregator.example") == SuggestedNextStep.Deprioritize &&
+      PilotStep("fleetwashsupply.example.org") == SuggestedNextStep.Deprioritize &&
+      PilotStep("cleanfleet.example.org") == SuggestedNextStep.Deprioritize &&
+      PilotStep("vectorfleet.example.org") == SuggestedNextStep.ApplicationReview &&
+      PilotStep("aggregator.example.org") == SuggestedNextStep.Deprioritize &&
       PilotStep("www.indeed.com") == SuggestedNextStep.Deprioritize &&
       pilotTriage.Count(x => x.Host == "www.charlottenc.gov" &&
           x.Suggestion.Step == SuggestedNextStep.FurtherResearch) == 2,
