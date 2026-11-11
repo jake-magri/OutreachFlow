@@ -37,7 +37,26 @@ builder.Services.AddIdentityCore<ApplicationUser>(options =>
     options.Lockout.MaxFailedAccessAttempts = 5;
     options.Lockout.DefaultLockoutTimeSpan = TimeSpan.FromMinutes(15);
 }).AddSignInManager().AddEntityFrameworkStores<AccountDbContext>();
-builder.Services.AddAuthentication(IdentityConstants.ApplicationScheme).AddIdentityCookies();
+var auth = builder.Services.AddAuthentication(IdentityConstants.ApplicationScheme);
+auth.AddIdentityCookies();
+// Google sign-in needs only identity scopes. Gmail access is separately
+// consented to from Mailbox using gmail.readonly, never at login.
+if (GoogleSignInEndpoints.Configured(builder.Configuration))
+{
+    auth.AddGoogle(GoogleSignInEndpoints.Provider, options =>
+    {
+        options.ClientId = builder.Configuration["GoogleAuth:ClientId"]!;
+        options.ClientSecret = builder.Configuration["GoogleAuth:ClientSecret"]!;
+        options.SignInScheme = IdentityConstants.ExternalScheme;
+        options.CallbackPath = "/signin-google";
+        options.Scope.Clear();
+        options.Scope.Add("openid");
+        options.Scope.Add("email");
+        options.Scope.Add("profile");
+        options.SaveTokens = false;
+        options.CorrelationCookie.SecurePolicy = CookieSecurePolicy.Always;
+    });
+}
 builder.Services.Configure<CookieAuthenticationOptions>(IdentityConstants.ApplicationScheme, options =>
 {
     options.LoginPath = "/account/login";
@@ -122,6 +141,7 @@ using (var scope = app.Services.CreateScope())
 }
 
 app.MapOutreachAccounts();
+app.MapGoogleSignIn();
 app.MapGmailMailboxEndpoints();
 
 // Local export of pipeline metadata (not email content).
