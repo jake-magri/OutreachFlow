@@ -201,7 +201,6 @@ public sealed class OutreachService(IDbContextFactory<OutreachDbContext> factory
         var p = await db.Prospects.SingleAsync(x => x.Id == id && x.WorkspaceId == workspaceId);
         if (p.Status != ProspectStatus.ReadyToInquire || p.Attempts != 0 || p.AutomationPaused)
             throw new InvalidOperationException("Drafts require an inquiry-eligible research result with no outreach or owner takeover.");
-        var workspaceId = await access.ActiveWorkspaceIdAsync();
         var s = await db.Workspaces.SingleAsync(w => w.Id == workspaceId);
         p.DraftSubject = Expand(s.InitialSubjectTemplate, s, p);
         p.DraftBody = Expand(s.InitialBodyTemplate, s, p);
@@ -219,7 +218,6 @@ public sealed class OutreachService(IDbContextFactory<OutreachDbContext> factory
         if (p.Status != ProspectStatus.DraftReady || p.Attempts != 0 || p.AutomationPaused || string.IsNullOrWhiteSpace(p.DraftBody))
             throw new InvalidOperationException("A reviewed, unpaused draft is required.");
         await GuardRecipientAsync(db, p);
-        var workspaceId = await access.ActiveWorkspaceIdAsync();
         var settings = await db.Workspaces.SingleAsync(w => w.Id == workspaceId);
         var result = await mail.SendAsync(p.ContactEmail, p.DraftSubject, p.DraftBody);
         db.Messages.Add(new OutreachMessage { ProspectId = id, Subject = p.DraftSubject, Body = p.DraftBody });
@@ -243,7 +241,6 @@ public sealed class OutreachService(IDbContextFactory<OutreachDbContext> factory
         await using var db = await factory.CreateDbContextAsync();
         var workspaceId = await access.ActiveWorkspaceIdAsync();
         var p = await db.Prospects.SingleAsync(x => x.Id == id && x.WorkspaceId == workspaceId);
-        var workspaceId = await access.ActiveWorkspaceIdAsync();
         var s = await db.Workspaces.SingleAsync(w => w.Id == workspaceId);
         if (p.Status != ProspectStatus.AwaitingReply || p.AutomationPaused || p.Attempts < 1 || p.Attempts >= 1 + p.PlannedFollowups)
             throw new InvalidOperationException("No further follow-up is allowed in this sequence.");
