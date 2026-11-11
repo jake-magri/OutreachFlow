@@ -33,6 +33,14 @@ Never assume a person has consented or that a contact address is appropriate sim
 
 **Not yet implemented:** automatic keyword web-search sourcing, reliable vendor-process classification without human review, PDF / third-party portal research, live mailbox integration, automatic sending or reply monitoring, durable scheduled jobs, production-grade migrations/backups, and public multi-tenant hosting.
 
+## Configurable research profiles (PR #5)
+
+Open **Settings → Website research profile** to choose a preset or edit priority terms, application/process terms, and excluded phrases. Terms are **literal case-insensitive phrases**, not regular expressions. Process terms prioritize likely official application instructions; priority terms reflect the business niche; exclusions demote irrelevant pages. The contact-extraction regex and network-safety checks remain shared and non-configurable.
+
+Built-in starting profiles include general B2B supplier research, fleet services, construction contracting, independent software contracting, junior developer employment research, and delivery driving. Employment profiles provide **research triage only**, not automated applications or messages. The scanner remains a six-page, read-only crawl of a company website supplied by the owner. No Google/LinkedIn/Indeed search API is connected.
+
+Profiles are saved per workspace as **local JSON files** in `research-profiles/workspace-<id>.json`, ignored by Git. This intentionally requires **no EF migration** and does not change either existing SQLite database. Save files along with both SQLite databases when backing up. Invalid/corrupt profile files fail closed rather than silently resetting to defaults.
+
 ## Run locally
 
 Prerequisites: .NET 10 SDK, Git, and Windows/Visual Studio or another supported .NET environment.
