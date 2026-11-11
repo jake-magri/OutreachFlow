@@ -15,3 +15,7 @@ research-profiles/
 
 # On-disk app-wide search request ledger (not user data or a provider token).
 search-usage/
+
+# OAuth refresh tokens and machine/user-protected DataProtection key ring.
+mailbox-connections/
+mailbox-keys/
