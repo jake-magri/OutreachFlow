@@ -8,7 +8,7 @@
 else
 {
     var p = details.Prospect;
-    <section class="page-header"><div><a href="/prospects" class="subtle">← Prospects</a><h1>@p.CompanyName</h1><p>@p.SiteName · <span class="status">@p.Status</span> · @p.Attempts simulated outreach attempts</p></div></section>
+    <section class="page-header"><div><a href="/prospects" class="subtle">← Prospects</a><h1>@p.CompanyName</h1><p>@p.SiteName · <span class="status">@p.Status</span> · @p.Attempts recorded outreach attempts</p></div></section>
     @if (!string.IsNullOrEmpty(alert)) { <div class="notice">@alert</div> }
     <div class="panel-grid">
         <section class="panel spaced">
@@ -59,7 +59,7 @@ else
             }
         </section>
         <section class="panel spaced">
-            <div class="panel-heading"><h2>2 · Draft and dry-run sequence</h2><small>Never sends real mail</small></div>
+            <div class="panel-heading"><h2>2 · Inquiry and outreach</h2><small>Simulation or record external sending</small></div>
             <p><strong>Email:</strong> @p.ContactEmail</p>
             <p><strong>Research:</strong> @p.ResearchOutcome</p>
             @if (p.Status == ProspectStatus.ApplicationTask)
@@ -77,7 +77,11 @@ else
             }
             @if (p.Status == ProspectStatus.DraftReady && !p.AutomationPaused)
             {
-                <button class="button primary" @onclick="SendInitial">Simulate initial email</button>
+                <div class="actions">
+                    <button class="button" @onclick="SendInitial">Simulate initial email</button>
+                    <button class="button primary" @onclick="ConfirmManualSend">I sent this email myself</button>
+                </div>
+                <small>Copy the reviewed recipient, subject and body into your own mailbox. Only click the confirmation after the email was actually sent. OutreachFlow does not transmit it.</small>
             }
             @if (p.Status == ProspectStatus.AwaitingReply && !p.AutomationPaused)
             {
@@ -89,7 +93,23 @@ else
                 <div class="actions"><button class="button" @onclick="Followup">Simulate next follow-up</button><button class="button" @onclick="Finish">Simulate no-response handoff</button></div>
                 <small>Buttons enforce the configured follow-up limit; they do not run on a timer yet.</small>
             }
-            @if (p.Attempts > 0 && p.Status != ProspectStatus.Suppressed)
+            @if (p.Attempts > 0 && details.Messages.Any(m => !m.IsSimulation && m.Direction == "Outbound") && p.Status is not (ProspectStatus.Suppressed or ProspectStatus.Closed))
+            {
+                <hr />
+                <h3>Record actual incoming reply</h3>
+                <p class="help">Paste a response received in your own mailbox. This is not a mailbox sync.</p>
+                <div class="field"><label>Actual reply category</label><select @bind="actualReplyCategory">
+                    <option value="Interested">Interested / open to call</option>
+                    <option value="ApplicationInstructions">Application or supplier instructions</option>
+                    <option value="HasQuestion">Has a question</option>
+                    <option value="Declined">Declined / opt out</option>
+                    <option value="OutOfOffice">Out of office</option>
+                    <option value="Unclear">Needs review</option>
+                </select></div>
+                <div class="field"><label>Received reply text</label><textarea @bind="actualReplyText" rows="4" class="textarea" placeholder="Paste the reply from your mailbox"></textarea></div>
+                <button class="button primary" @onclick="ConfirmManualReply">Record received reply</button>
+            }
+            @if (p.Attempts > 0 && !details.Messages.Any(m => !m.IsSimulation) && p.Status != ProspectStatus.Suppressed)
             {
                 <hr />
                 <h3>3 · Ingest a test reply</h3>
@@ -146,7 +166,7 @@ else
         @if (p.Status == ProspectStatus.Suppressed) { <div class="notice">Suppressed recipient. Do not contact automatically or move to manual outreach.</div> }
         @foreach (var m in details.Messages)
         {
-            <div class="timeline"><small>@m.OccurredUtc.ToLocalTime().ToString("g") · @m.Direction · @m.Classification · SIMULATED</small><strong>@m.Subject</strong><pre>@m.Body</pre></div>
+            <div class="timeline"><small>@m.OccurredUtc.ToLocalTime().ToString("g") · @m.Direction · @m.Classification · @(m.IsSimulation ? "SIMULATED" : "OWNER RECORDED")</small><strong>@m.Subject</strong><pre>@m.Body</pre></div>
         }
         @foreach (var a in details.Activity)
         {
@@ -167,6 +187,8 @@ else
     private string scanSummary = "";
     private ReplyCategory replyCategory = ReplyCategory.Interested;
     private string replyText = "";
+    private ReplyCategory actualReplyCategory = ReplyCategory.Interested;
+    private string actualReplyText = "";
     private string manualKind = "Internal note";
     private string manualNote = "";
     private string manualNextAction = "";
@@ -223,6 +245,12 @@ else
     private Task SaveResearch() => Execute(() => Flow.RecordResearchAsync(Id, researchOutcome, researchUrl, researchTitle, researchNote, researchOfficial));
     private Task Draft() => Execute(() => Flow.GenerateDraftAsync(Id));
     private Task SendInitial() => Execute(() => Flow.SimulateInitialSendAsync(Id));
+    private Task ConfirmManualSend() => Execute(() => Flow.RecordExternalInitialSendAsync(Id));
+    private async Task ConfirmManualReply()
+    {
+        await Execute(() => Flow.RecordExternalReplyAsync(Id, actualReplyText, actualReplyCategory));
+        if (alert.StartsWith("Saved")) actualReplyText = "";
+    }
     private Task Followup() => Execute(() => Flow.SimulateFollowupAsync(Id));
     private Task Finish() => Execute(() => Flow.MarkNoResponseAsync(Id));
     private Task Close() => Execute(() => Flow.CloseAsync(Id));
