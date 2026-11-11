@@ -46,6 +46,20 @@ Test whether rendering JavaScript changes the outcome for a public website where
 
 **Important:** This is experimental browser execution of third-party code. It is not yet a security-reviewed production browser sandbox, even with the above restrictions. Do not use this adapter on internal, private, authenticated or untrusted arbitrary URLs outside the existing approved public-site policy.
 
+## Diagnostic retest after first City of Charlotte browser scan
+
+The first owner test fetched one HTML page but showed **zero browser attempts**. Because the browser renderer is intentionally skipped for access-challenge HTML, that result is consistent with an access challenge, but the original message did **not** identify the matching text. Do not claim the exact cause until the next retest.
+
+The research screen now displays **Latest page diagnostics** with HTTP status, bounded page title, readable character count, the exact rule ID, the **literal allowlisted challenge phrase** that matched, and the reason browser rendering was skipped/attempted. These details are also recorded as research warning evidence, without saving raw HTML, cookies or arbitrary page body snippets.
+
+Retest the same City of Charlotte prospect with **Render with browser (experimental)**. Check especially:
+- `challenge-title` or `challenge-intro` + the matched phrase → browser was intentionally skipped; verify source manually.
+- `minimal-readable-text` or `url-content-mismatch` → browser should be attempted; success or failure must be reported.
+- HTTP non-200 → response was inaccessible; browser is not automatically retried.
+- `none` → content was judged sufficiently readable (not necessarily relevant); browser may not be needed.
+
+A successful HTTP 200 with an access challenge remains **research incomplete**, not evidence of an application process being absent. Do not alter the browser-safety restrictions to make this one target pass.
+
 ## Test outcome decision
 
 For the City of Charlotte prospect, compare the two results:
