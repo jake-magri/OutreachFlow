@@ -1,0 +1,39 @@
+name: Browser acceptance (isolated Playwright)
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  browser:
+    name: Chromium UI journeys
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+      - name: Set up .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - name: Build app and C# Playwright harness
+        run: dotnet build OutreachFlow.slnx --configuration Release
+      - name: Install isolated Chromium for pinned Playwright
+        shell: pwsh
+        run: ./OutreachFlow.BrowserTests/bin/Release/net10.0/playwright.ps1 install --with-deps chromium
+      - name: Make a local development HTTPS certificate
+        run: dotnet dev-certs https
+      - name: Run browser acceptance without Gmail, Tavily, or user data
+        run: dotnet run --project OutreachFlow.BrowserTests --configuration Release --no-build
+      - name: Upload failure screenshot, trace and localhost logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: isolated-browser-failure
+          path: OutreachFlow.BrowserTests/TestResults/
+          if-no-files-found: ignore
+          retention-days: 7
