@@ -23,6 +23,23 @@ else
                 {
                     <div class="notice">@scanSummary</div>
                 }
+                @if (lastScanDiagnostics.Count > 0)
+                {
+                    <h3>Latest page diagnostics</h3>
+                    @foreach (var d in lastScanDiagnostics)
+                    {
+                        <div class="evidence">
+                            <strong>@d.Title</strong>
+                            <p><small>HTTP @d.HttpStatusCode · @d.VisibleCharacters readable characters · Rule: @d.InitialRuleId</small></p>
+                            @if (!string.IsNullOrWhiteSpace(d.MatchedPhrase))
+                            {
+                                <p>Matched challenge phrase: <strong>@d.MatchedPhrase</strong></p>
+                            }
+                            <p>Browser: @d.BrowserDecision</p>
+                            @if (d.IsInconclusive) { <p>@d.Warning</p> }
+                        </div>
+                    }
+                }
                 <p class="help">All automatic discoveries are unverified. A contact or possible portal does not authorize sending; inspect the source, verify relevance, and explicitly approve the recipient and process decision.</p>
             </div>
             <div class="field"><label>Research result</label><select @bind="researchOutcome">
@@ -190,6 +207,7 @@ else
     private bool researchOfficial;
     private bool scanning;
     private string scanSummary = "";
+    private List<OutreachFlow.Services.Research.ResearchPageDiagnostic> lastScanDiagnostics = [];
     private ReplyCategory replyCategory = ReplyCategory.Interested;
     private string replyText = "";
     private ReplyCategory actualReplyCategory = ReplyCategory.Interested;
@@ -225,12 +243,14 @@ else
         scanning = true;
         alert = "";
         scanSummary = "";
+        lastScanDiagnostics = [];
         await InvokeAsync(StateHasChanged);
         try
         {
             var scan = useBrowser
                 ? await Flow.ResearchCompanyWithBrowserAsync(Id)
                 : await Flow.ResearchCompanyAsync(Id);
+            lastScanDiagnostics = scan.PageDiagnostics.ToList();
             scanSummary = $"Fetched {scan.PagesChecked.Count} HTML page(s); {scan.PageDiagnostics.Count(x => x.IsInconclusive)} returned insufficient or suspicious content. Found {scan.Candidates.Count} possible reference(s) and {scan.Contacts.Count} published email candidate(s). {scan.SuggestedReview} {scan.Limitations}";
             alert = useBrowser
                 ? "Experimental browser scan saved. Check warnings and verify sources; no process or contact is approved."
