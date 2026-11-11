@@ -112,12 +112,13 @@ builder.Services.AddSingleton<IOutboundEmail, DryRunEmail>();
 
 var app = builder.Build();
 
-// Fail closed: authentication and production hardening are intentionally NOT included yet.
+// Fail closed outside Development: identity exists, but hosted migrations, recovery,
+// provider compliance, and production security hardening are incomplete.
 if (!app.Environment.IsDevelopment())
     throw new InvalidOperationException("Prototype only: add authentication and security hardening before hosting OutreachFlow.");
 
 // An explicit localhost guard also covers accidental --urls 0.0.0.0 in Development.
-// This is not a replacement for production authentication.
+// This complements authentication, not a replacement for secure hosting.
 app.Use(async (context, next) =>
 {
     if (context.Connection.RemoteIpAddress is not IPAddress address || !IPAddress.IsLoopback(address))
