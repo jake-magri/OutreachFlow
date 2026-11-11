@@ -23,3 +23,9 @@ public interface ICompanyResearcher
     Task<ResearchScan> SearchAsync(string website, ResearchProfile profile, CancellationToken cancellationToken = default)
         => SearchAsync(website, cancellationToken);
 }
+
+public interface IBrowserCompanyResearcher : ICompanyResearcher
+{
+    Task<ResearchScan> SearchWithBrowserAsync(string website, ResearchProfile profile,
+        CancellationToken cancellationToken = default);
+}
