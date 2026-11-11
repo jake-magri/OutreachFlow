@@ -1,0 +1,145 @@
+@page "/mailbox"
+@using OutreachFlow.Services.Mailbox
+@using Microsoft.AspNetCore.Components.Authorization
+@using Microsoft.EntityFrameworkCore
+@inject GmailMailboxService Gmail
+@inject AccountDbContext Accounts
+@inject AuthenticationStateProvider Authentication
+@inject IDbContextFactory<OutreachDbContext> Factory
+<PageTitle>Mailbox · OutreachFlow</PageTitle>
+
+<section class="page-header">
+    <div>
+        <div class="eyebrow">AUTHORIZED MAILBOX PILOT</div>
+        <h1>Gmail reply review</h1>
+        <p>Read-only Gmail connection for this workspace. Review matching inbound messages and explicitly choose what to record. No emails are sent by OutreachFlow.</p>
+    </div>
+</section>
+
+<section class="panel spaced">
+    <div class="panel-heading"><h2>Google Workspace connection</h2><small>Owner-only · localhost</small></div>
+    @if (!string.IsNullOrWhiteSpace(notice)) { <p class="notice">@notice</p> }
+    @if (!authorized) { <p>Only a workspace owner may manage a mailbox connection.</p> }
+    else if (!Gmail.IsConfigured)
+    {
+        <p>Gmail OAuth is not configured. This pilot requires a Windows localhost run, Google OAuth client credentials in .NET user-secrets, and the exact HTTPS localhost callback URL.</p>
+        <p class="help">No mailbox account or password is needed from other workspaces. Follow MAILBOX-PILOT.md before enabling.</p>
+    }
+    else if (string.IsNullOrWhiteSpace(connectedEmail))
+    {
+        <p>Not connected. Google will request read-only Gmail access; it must match the sender email in this workspace's Settings.</p>
+        <a class="button primary" href="/mailbox/google/connect">Connect Gmail (read only)</a>
+    }
+    else
+    {
+        <p><strong>Connected:</strong> @connectedEmail</p>
+        <p class="help">Only the latest 20 inbox messages from the last 30 days are examined. Candidate replies must match an existing prospect with a real, owner-recorded outgoing message. Other inbox messages are not displayed or imported.</p>
+        <div class="actions">
+            <button class="button primary" @onclick="Review" disabled="@busy">@(busy ? "Reviewing…" : "Review matching inbox replies")</button>
+            <button class="button" @onclick="Disconnect" disabled="@busy">Disconnect local authorization</button>
+        </div>
+    }
+</section>
+@if (authorized && !string.IsNullOrWhiteSpace(connectedEmail) && items is not null)
+{
+    <section class="panel spaced">
+        <div class="panel-heading"><h2>Owner review</h2><small>@items.Count matching messages</small></div>
+        <p class="help">Review source messages in Gmail if their identity or context is uncertain. This app cannot authenticate the human sender from a From header alone. Imports are manually classified and permanently pause simulated follow-ups.</p>
+        @if (items.Count == 0) { <p>No matching, unimported replies appeared in this bounded inbox review. This is not proof that no replies exist.</p> }
+        @foreach (var item in items)
+        {
+            <div class="evidence">
+                <strong>@item.CompanyName · @item.Subject</strong>
+                <p><small>From @item.Sender · @item.ReceivedUtc.ToString("u") · Prospect #@item.ProspectId</small></p>
+                <pre style="white-space:pre-wrap;overflow-wrap:anywhere;max-height:12rem;overflow:auto">@item.Body</pre>
+                <div class="actions">
+                    <select aria-label="@($"Classify reply for {item.CompanyName}")" @bind="categories[item.MessageId]">
+                        <option value="@ReplyCategory.Interested">Interested / warm lead</option>
+                        <option value="@ReplyCategory.ApplicationInstructions">Application instructions</option>
+                        <option value="@ReplyCategory.HasQuestion">Has a question</option>
+                        <option value="@ReplyCategory.Declined">Declined / opt out (suppression)</option>
+                        <option value="@ReplyCategory.OutOfOffice">Out of office</option>
+                        <option value="@ReplyCategory.Unclear">Unclear / manual follow-up</option>
+                    </select>
+                    <button class="button primary" @onclick="() => Import(item)" disabled="@busy">Record reviewed reply</button>
+                    <a class="button" href="@($"/prospects/{item.ProspectId}")">Open prospect</a>
+                </div>
+            </div>
+        }
+    </section>
+}
+@code {
+    private bool authorized;
+    private bool busy;
+    private int workspaceId;
+    private string? connectedEmail;
+    private string notice = "";
+    private IReadOnlyList<GmailInboxItem>? items;
+    private readonly Dictionary<string, ReplyCategory> categories = new(StringComparer.Ordinal);
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            var state = await Authentication.GetAuthenticationStateAsync();
+            workspaceId = await MailboxOwner.RequireAsync(state.User, Accounts);
+            authorized = true;
+            connectedEmail = await Gmail.ConnectedEmailAsync(workspaceId);
+        }
+        catch (UnauthorizedAccessException) { authorized = false; }
+        catch (Exception ex) { notice = "Mailbox status unavailable: " + ex.Message; }
+    }
+
+    private async Task Review()
+    {
+        if (!authorized || busy) return;
+        busy = true;
+        try
+        {
+            var state = await Authentication.GetAuthenticationStateAsync();
+            workspaceId = await MailboxOwner.RequireAsync(state.User, Accounts);
+            items = await Gmail.ReviewInboxAsync(workspaceId, Factory);
+            categories.Clear();
+            foreach (var item in items) categories[item.MessageId] = ReplyCategory.Unclear;
+            notice = "Review each matching message before recording it.";
+        }
+        catch (Exception ex) { items = null; notice = "Inbox review unavailable: " + ex.Message; }
+        finally { busy = false; }
+    }
+
+    private async Task Import(GmailInboxItem item)
+    {
+        if (!authorized || busy || !categories.TryGetValue(item.MessageId, out var category)) return;
+        busy = true;
+        try
+        {
+            var state = await Authentication.GetAuthenticationStateAsync();
+            workspaceId = await MailboxOwner.RequireAsync(state.User, Accounts);
+            var recorded = await Gmail.ImportReviewedInboundAsync(workspaceId, item.ProspectId,
+                item.MessageId, category, Factory);
+            notice = recorded
+                ? "Gmail reply recorded and prospect handed to manual review. No email was sent."
+                : "This Gmail message was already imported for the prospect.";
+            items = items?.Where(x => x.MessageId != item.MessageId).ToArray();
+        }
+        catch (Exception ex) { notice = "Import rejected: " + ex.Message; }
+        finally { busy = false; }
+    }
+
+    private async Task Disconnect()
+    {
+        if (!authorized || busy) return;
+        busy = true;
+        try
+        {
+            var state = await Authentication.GetAuthenticationStateAsync();
+            workspaceId = await MailboxOwner.RequireAsync(state.User, Accounts);
+            await Gmail.DisconnectAsync(workspaceId);
+            connectedEmail = null;
+            items = null;
+            notice = "Local Gmail authorization removed. Revoke OutreachFlow's access in your Google Account separately if desired.";
+        }
+        catch (Exception ex) { notice = "Disconnect failed: " + ex.Message; }
+        finally { busy = false; }
+    }
+}
