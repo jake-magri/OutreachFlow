@@ -1,4 +1,5 @@
 using System.Net;
+using Microsoft.Data.Sqlite;
 using System.Net.Http.Headers;
 using System.Net.Mail;
 using System.Security.Cryptography;
@@ -13,7 +14,7 @@ namespace OutreachFlow.Services.Mailbox;
 
 public sealed record GmailConnection(string Email, string RefreshToken);
 public sealed record GmailInboxItem(string MessageId, string Sender, string Subject,
-    string Body, DateTime ReceivedUtc, int ProspectId, string CompanyName);
+    string Body, DateTime ReceivedUtc, int ProspectId, string CompanyName, string ThreadId);
 
 /// <summary>A local workspace-owned mailbox record; its refresh token is encrypted at rest.</summary>
 public sealed class GmailConnectionStore(string folder, IDataProtectionProvider keys)
@@ -241,6 +242,12 @@ public sealed class GmailMailboxService(IConfiguration config, IHttpClientFactor
                     return value.GetString() ?? "";
             return "";
         }
+        if (!message.TryGetProperty("id", out var sourceId) ||
+            sourceId.ValueKind != JsonValueKind.String || sourceId.GetString() != id ||
+            !message.TryGetProperty("threadId", out var thread) ||
+            thread.ValueKind != JsonValueKind.String ||
+            string.IsNullOrWhiteSpace(thread.GetString()) || thread.GetString()!.Length > 100)
+            return null;
         var from = Header("From");
         if (!MailAddress.TryCreate(from, out var sender) ||
             !sender.Address.Equals(expectedFrom, StringComparison.OrdinalIgnoreCase))
@@ -258,7 +265,7 @@ public sealed class GmailMailboxService(IConfiguration config, IHttpClientFactor
         try { received = DateTimeOffset.FromUnixTimeMilliseconds(millis).UtcDateTime; }
         catch (ArgumentOutOfRangeException) { return null; }
         return new GmailInboxItem(id, sender.Address, subject[..Math.Min(subject.Length, 300)],
-            body, received, prospectId, companyName);
+            body, received, prospectId, companyName, thread.GetString()!);
     }
 
     private static string PlainBody(JsonElement payload)
@@ -313,6 +320,32 @@ public sealed class GmailMailboxService(IConfiguration config, IHttpClientFactor
             .SingleAsync(w => w.Id == workspaceId, ct);
         if (!connection.Email.Equals(workspace.SenderEmail, StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException("The connected mailbox no longer matches the workspace sender.");
+        var token = await TokenAsync(connection, ct);
+        using var source = await GetAsync("messages/" + Uri.EscapeDataString(messageId) +
+            "?format=full", token, ct);
+        if (!source.RootElement.TryGetProperty("labelIds", out var labels) ||
+            labels.ValueKind != JsonValueKind.Array ||
+            !labels.EnumerateArray().Any(l => l.GetString() == "INBOX"))
+            throw new InvalidOperationException("Selected Gmail message is not currently in the inbox.");
+
+        // Acquire SQLite's write reservation before reading mutable eligibility or
+        // duplicate state. Network access has completed before this short transaction.
+        await db.Database.OpenConnectionAsync(ct);
+        await using var transaction = ((SqliteConnection)db.Database.GetDbConnection())
+            .BeginTransaction(deferred: false);
+        await using var tx = await db.Database.UseTransactionAsync(transaction, ct);
+        workspace = await db.Workspaces.AsNoTracking().SingleAsync(w => w.Id == workspaceId, ct);
+        var currentConnection = await store.LoadAsync(workspaceId, ct);
+        if (currentConnection is null ||
+            !currentConnection.Email.Equals(connection.Email, StringComparison.OrdinalIgnoreCase) ||
+            !connection.Email.Equals(workspace.SenderEmail, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("Mailbox changed during review. Review again.");
+        var marker = "gmail:" + messageId;
+        if (await db.ProviderMessages.AnyAsync(m => m.WorkspaceId == workspaceId &&
+                m.Provider == "gmail" && m.MailboxEmail == connection.Email && m.MessageId == messageId, ct) ||
+            await LegacyImportedAsync(db, workspaceId, marker, ct))
+            return false;
+
         var prospect = await db.Prospects.SingleOrDefaultAsync(p =>
             p.WorkspaceId == workspaceId && p.Id == prospectId, ct);
         if (prospect is null || prospect.Attempts < 1 ||
@@ -325,40 +358,26 @@ public sealed class GmailMailboxService(IConfiguration config, IHttpClientFactor
             .FirstOrDefaultAsync(ct);
         if (firstSent is null)
             throw new InvalidOperationException("Record a real outgoing email before importing a reply.");
-
-        var marker = "gmail:" + messageId;
-        if (await db.Activities.AsNoTracking().AnyAsync(a =>
-            a.ProspectId == prospectId && a.Kind == "Gmail inbound imported" &&
-            a.Detail == marker, ct))
-            return false;
-
-        var token = await TokenAsync(connection, ct);
-        using var source = await GetAsync("messages/" + Uri.EscapeDataString(messageId) +
-            "?format=full", token, ct);
-        if (!source.RootElement.TryGetProperty("labelIds", out var labels) ||
-            labels.ValueKind != JsonValueKind.Array ||
-            !labels.EnumerateArray().Any(l => l.GetString() == "INBOX"))
-            throw new InvalidOperationException("Selected Gmail message is not currently in the inbox.");
         var item = ParseInbound(messageId, source.RootElement, prospect.Id,
             prospect.CompanyName, prospect.ContactEmail) ??
-            throw new InvalidOperationException("Sender does not match the recorded recipient.");
+            throw new InvalidOperationException("Gmail identity or sender does not match the reviewed message.");
         if (item.ReceivedUtc < firstSent.Value.AddMinutes(-5))
             throw new InvalidOperationException("This message predates the recorded outgoing inquiry.");
         if (string.IsNullOrWhiteSpace(item.Body))
             throw new InvalidOperationException("No readable message text was found; review in Gmail manually.");
 
-        await using var tx = await db.Database.BeginTransactionAsync(ct);
-        // Recheck the duplicate marker after acquiring the write transaction.
-        if (await db.Activities.AnyAsync(a => a.ProspectId == prospectId &&
-            a.Kind == "Gmail inbound imported" && a.Detail == marker, ct))
-            return false;
-
-        db.Messages.Add(new OutreachMessage
+        var importedMessage = new OutreachMessage
         {
             ProspectId = prospectId, Direction = "Inbound",
             Classification = "Gmail reviewed: " + category,
             Subject = item.Subject, Body = item.Body,
             IsSimulation = false, OccurredUtc = item.ReceivedUtc
+        };
+        db.ProviderMessages.Add(new ProviderMessage
+        {
+            WorkspaceId = workspaceId, ProspectId = prospectId, Message = importedMessage,
+            MailboxEmail = connection.Email.Trim().ToLowerInvariant(),
+            MessageId = item.MessageId, ThreadId = item.ThreadId
         });
         db.Activities.Add(new ActivityEntry
         {
@@ -384,9 +403,19 @@ public sealed class GmailMailboxService(IConfiguration config, IHttpClientFactor
         prospect.NextActionDate = null;
         prospect.UpdatedUtc = DateTime.UtcNow;
         await db.SaveChangesAsync(ct);
-        await tx.CommitAsync(ct);
+        await transaction.CommitAsync(ct);
         return true;
     }
+
+    private static Task<bool> LegacyImportedAsync(OutreachDbContext db, int workspaceId,
+        string marker, CancellationToken ct) =>
+        (from activity in db.Activities
+         join prospect in db.Prospects on activity.ProspectId equals prospect.Id
+         where prospect.WorkspaceId == workspaceId && activity.Kind == "Gmail inbound imported" &&
+             activity.Detail == marker &&
+             !db.ProviderMessages.Any(m => m.ProspectId == activity.ProspectId &&
+                 "gmail:" + m.MessageId == activity.Detail)
+         select activity.Id).AnyAsync(ct);
 
     /// <summary>
     /// Returns only recent candidate replies whose From matches a recorded
@@ -423,11 +452,18 @@ public sealed class GmailMailboxService(IConfiguration config, IHttpClientFactor
             Uri.EscapeDataString("newer_than:30d"), token, ct);
         if (!list.RootElement.TryGetProperty("messages", out var messages) ||
             messages.ValueKind != JsonValueKind.Array) return [];
-        var seen = await db.Activities.AsNoTracking()
-            .Where(a => a.Kind == "Gmail inbound imported" &&
-                eligibleIds.Contains(a.ProspectId))
-            .Select(a => a.Detail).ToListAsync(ct);
-        var processed = seen.ToHashSet(StringComparer.Ordinal);
+        // Legacy audit markers lack mailbox identity. Preserve their conservative
+        // workspace-wide dedupe until an operator can verify that provenance.
+        var legacySeen = await (from activity in db.Activities.AsNoTracking()
+            join prospect in db.Prospects on activity.ProspectId equals prospect.Id
+            where prospect.WorkspaceId == workspaceId && activity.Kind == "Gmail inbound imported" &&
+                !db.ProviderMessages.Any(m => m.ProspectId == activity.ProspectId &&
+                    "gmail:" + m.MessageId == activity.Detail)
+            select activity.Detail).ToListAsync(ct);
+        var seen = await db.ProviderMessages.AsNoTracking().Where(m => m.WorkspaceId == workspaceId &&
+            m.Provider == "gmail" && m.MailboxEmail == connection.Email)
+            .Select(m => m.MessageId).ToListAsync(ct);
+        var processed = legacySeen.Concat(seen.Select(id => "gmail:" + id)).ToHashSet(StringComparer.Ordinal);
         var found = new List<GmailInboxItem>();
         foreach (var item in messages.EnumerateArray().Take(20))
         {

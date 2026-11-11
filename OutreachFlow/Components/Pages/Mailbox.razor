@@ -119,7 +119,7 @@
                 item.MessageId, category, Factory);
             notice = recorded
                 ? "Gmail reply recorded and prospect handed to manual review. No email was sent."
-                : "This Gmail message was already imported for the prospect.";
+                : "This Gmail message was already imported in this workspace.";
             items = items?.Where(x => x.MessageId != item.MessageId).ToArray();
         }
         catch (Exception ex) { notice = "Import rejected: " + ex.Message; }

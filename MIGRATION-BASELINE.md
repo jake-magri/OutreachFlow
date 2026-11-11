@@ -1,89 +1,58 @@
-# EF Core 10 migration baseline — non-destructive adoption
+# Database versions and explicit upgrades
 
-This is the **second, isolated slice** of [issue #16](https://github.com/jake-magri/OutreachFlow/issues/16), after the verified local backup/restore CLI in PR #23.
+OutreachFlow ships generated EF Core migrations for the business and Identity SQLite databases. Fresh installations initialize through migrations. Existing installations are checked at startup and must apply pending changes through the recovery CLI.
 
-## What is now in source control
+The provider identity migration adds `ProviderMessages` with mailbox, Gmail message and conversation IDs. Unique indexes protect against repeat imports within a workspace and mailbox. Foreign keys keep the workspace, prospect and recorded message consistent. The migration adds alternate keys to the existing prospect and message tables, which SQLite implements through table rebuilds.
 
-- Generated (not hand-written) baseline migrations and model snapshots for both independently managed EF contexts:
-  - `OutreachDbContext` → `InitialBusinessSchema`
-  - `AccountDbContext` → `InitialIdentitySchema`
-- A pinned `dotnet-ef` local tool and **disconnected design-time factories** (never point scaffolding at your existing `.db` files).
-- An operator-only `baseline inspect` that compares both existing SQLite DDL schemas to a fresh `EnsureCreated` schema generated from the same EF models. It also checks SQLite integrity and existing migration history. A mismatch **blocks adoption** rather than guessing how to repair it.
-- An explicit `baseline adopt` that requires a **new verified backup** and then inserts the current baseline migration ID into each existing DB's `__EFMigrationsHistory` table. This does **not** execute the baseline migrations' `CreateTable` code on legacy data.
-- Offline tests for both paths: fresh DBs built by `MigrateAsync`, legacy `EnsureCreatedAsync` databases with real rows, history adoption, unchanged rows, migration no-ops after adoption and drift rejection.
+## Upgrade an existing installation
 
-## What startup does
-
-- A missing or empty database is initialized from its compiled EF migrations.
-- An existing database with current migration history opens as-is.
-- A legacy database with no migration history can still open while the application ships only the initial migration for its context. To record the baseline, stop the app and run the backed-up adoption command below.
-- Startup blocks unexpected or pending migration history on an existing database. Future schema upgrades require a reviewed apply procedure.
-
-Each context follows these rules independently, including when one database has been adopted and the other is still legacy.
-
-## Why this stage exists
-
-EF Core uses `__EFMigrationsHistory` to track applied migrations. Earlier OutreachFlow builds used `EnsureCreatedAsync`, which creates tables but does not write migration history. Applying an initial migration directly against those populated legacy files would try to create tables that already exist.
-
-To avoid data loss or a failed upgrade, the adopter first compares schema definitions, backs up all local state, then marks the matching initial migration as already applied. It refuses unknown history, unexpected tables or changed index/column definitions. A database with a **different** model is not silently upgraded: investigate and plan a separate migration.
-
-This is a deliberately strict same-model baseline, not a generic schema-repair tool.
-
-## Safe commands from PowerShell
-
-From the repository root:
+Stop all OutreachFlow processes first. From the repository root, using the database location confirmed in the November 11 pilot, run these commands individually.
 
 ```powershell
-git fetch origin
-git switch --track origin/feature/persistence-startup-migrations
 dotnet build OutreachFlow.slnx
-dotnet run --project OutreachFlow.SmokeTests
+dotnet run --project .\OutreachFlow.SmokeTests
+dotnet run --project .\OutreachFlow.RecoveryCli -- baseline inspect .\OutreachFlow
+dotnet run --project .\OutreachFlow.RecoveryCli -- upgrade .\OutreachFlow .\OutreachFlow "$HOME\OutreachFlowBackups\provider-identity-001"
 ```
 
-For an **inspection only**, stop OutreachFlow and first identify the actual directory containing BOTH `outreachflow.db` and `outreachflow.auth.db`. For a typical repository-root launch, they're in the repo root:
+Choose a new backup directory outside the repository. The arguments are the directory containing both databases, the application's content directory, and the new backup directory. If your connection strings place the databases elsewhere, use that actual directory. The CLI expects `outreachflow.db` and `outreachflow.auth.db` together.
+
+The upgrade command performs these steps.
+
+1. Inspect both databases, their integrity, foreign keys and migration histories. Reconstruct each recorded schema from the compiled migrations and compare its SQLite definitions. A legacy database with no history is compared to the frozen initial migration.
+2. Create and verify a recovery bundle containing both databases and auxiliary local state.
+3. Record the initial baseline for compatible legacy databases.
+4. Apply pending migrations independently to both contexts and verify the resulting schemas.
+
+The databases use independent transactions. If the command stops after one file advances, preserve the backup, address the reported problem and rerun with a new backup destination. Inspection supports a pair with different recorded versions. Unknown history, schema drift and foreign-key violations stop the operation for investigation.
+
+After success, run these commands individually.
 
 ```powershell
-dotnet run --project OutreachFlow.RecoveryCli -- baseline inspect .
+dotnet run --project .\OutreachFlow.RecoveryCli -- baseline inspect .\OutreachFlow
+dotnet run --project .\OutreachFlow
 ```
 
-You will see each database's schema compatibility, its migration ID, and whether that version has already been recorded. Inspection is read-only. If either schema doesn't match, **do not proceed**; the tool is intentionally conservative.
+Both inspection results should report `compatible=True, adopted=True`. `baseline inspect` verifies the schema at the recorded version. Startup also checks that all compiled migrations have been applied.
 
-For a **test adoption**, the preferred path is to first use PR #23's recovery tool to restore the last backup into a **new, disposable directory**, and then adopt that copy. The CLI expects both default SQLite filenames inside the given database directory.
+## Existing Gmail records
 
-```powershell
-# Example: adopt a disposable database pair, NOT your active originals
-dotnet run --project OutreachFlow.RecoveryCli -- baseline inspect "$HOME\OutreachFlowRestoreChecks\pilot-001"
-dotnet run --project OutreachFlow.RecoveryCli -- baseline adopt "$HOME\OutreachFlowRestoreChecks\pilot-001" OutreachFlow "$HOME\OutreachFlowBackups\baseline-copy-test-001"
-```
+Existing message text and `gmail:<id>` activity markers are preserved. Those records lack verified mailbox and conversation identity, so the migration leaves structured identity empty for historical messages. The importer continues checking legacy markers throughout the workspace to avoid reimporting them onto another prospect.
 
-**If** the disposable copy passes and you subsequently decide to adopt the original pair, stop all app processes first, choose a **new unused backup destination outside the repository** and run:
+New reviewed imports store a `ProviderMessages` row linked to the existing message history. Mailbox identity uses the Gmail account address, with case-insensitive comparison, so reconnecting OAuth preserves duplicate detection. Sender-based candidate matching still requires owner review. Conversation IDs are stored for subsequent correlation work.
 
-```powershell
-dotnet run --project OutreachFlow.RecoveryCli -- baseline inspect .
-dotnet run --project OutreachFlow.RecoveryCli -- baseline adopt . OutreachFlow "$HOME\OutreachFlowBackups\baseline-original-001"
-```
+## Recovery and validation
 
-The adopter creates and verifies the backup **before** changing either SQLite file. The two files are independent transactions: if one history stamp succeeds and the other fails, keep the backup, inspect, and retry after resolving the error. Do not delete the history manually.
+Recovery bundles contain customer data and OAuth key material. Protect and encrypt them. Windows DPAPI-bound credentials may require reconnection on another account or machine. See [RECOVERY-PLAYBOOK.md](RECOVERY-PLAYBOOK.md).
 
-**Do not run `dotnet ef database update` on any populated legacy database to apply the initial migration.** The design-time factories intentionally target `:memory:` and are for scaffolding; they are not your application's configured runtime connections. Use the recovery CLI to adopt the initial baseline on populated legacy databases. Existing databases with pending schema upgrades need a separate reviewed apply procedure.
+For a rehearsal, restore a verified bundle to a new directory, then run `upgrade` against that copy with another new backup destination. Restore also puts auxiliary folders in the restored directory, so supply it as both the database and content directory when rehearsing an upgrade of that restored installation.
 
-## Future migration workflow
+If recovery is needed, stop the app and restore the pre-upgrade bundle into a new directory. Verify its contents and use the matching application version before intentionally replacing the active installation. Keep the original files and recovery bundle available while diagnosing a failed upgrade.
 
-After adoption is accepted, future schema changes should:
+Automated coverage exercises legacy baseline adoption, direct upgrade from restored legacy files, mixed-version retry, preserved workspace/Identity/Gmail history, fresh creation, schema-drift rejection and provider import concurrency. Local acceptance should confirm existing sign-in, workspace records, the previously imported reply and a new reviewed Gmail reply.
 
-1. Update entity/model configuration and generate an incremental migration with the pinned `dotnet ef` tool.
-2. Review its Up/Down code, SQL operations, constraints, tenant ownership implications and compatibility with existing records.
-3. Test migration on both a fresh DB and a restored copy of a real legacy DB, including verifying data counts, foreign keys and history.
-4. Release with a reviewed upgrade procedure for existing databases. Fresh databases are initialized from the compiled migrations.
+## Baseline-only commands
 
-No new FK/uniqueness constraints or implicit `WorkspaceId = 1` changes are included here. Those need a follow-on migration and historical-data cleanup checks. Issue #16 remains open.
+`baseline adopt <database-directory> <application-content-directory> <new-backup-directory>` remains available to record an initial baseline with a verified backup. Use `upgrade` to apply the provider identity migration as well.
 
-## Merge acceptance
-
-- [ ] CI compiles generated migrations and reports no model drift.
-- [ ] Both legacy `EnsureCreated` and new `Migrate` test databases show the same expected tables and indexes.
-- [ ] A legacy record and original Identity membership survive baseline adoption without changing contents.
-- [ ] Unknown schema changes and unknown migrations block adoption.
-- [ ] App still works normally with existing data on Windows, with no automatic schema changes.
-- [ ] On a **copy** of your current local databases, `baseline inspect` reports two matching schemas; adoption/verify succeeds if you choose to test.
-- [ ] You have a verified, encrypted, off-repo backup before touching any original data.
+Design-time factories target in-memory databases for scaffolding. Use the recovery CLI to apply changes to the local installation. Future migrations should be generated with the pinned EF tool, reviewed for data preservation, and tested against both fresh and upgraded databases.

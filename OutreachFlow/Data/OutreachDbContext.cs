@@ -10,6 +10,7 @@ public sealed class OutreachDbContext(DbContextOptions<OutreachDbContext> option
     public DbSet<ResearchEvidence> ResearchEvidence => Set<ResearchEvidence>();
     public DbSet<OutreachMessage> Messages => Set<OutreachMessage>();
     public DbSet<ActivityEntry> Activities => Set<ActivityEntry>();
+    public DbSet<ProviderMessage> ProviderMessages => Set<ProviderMessage>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -18,6 +19,22 @@ public sealed class OutreachDbContext(DbContextOptions<OutreachDbContext> option
         modelBuilder.Entity<ResearchEvidence>().HasIndex(e => e.ProspectId);
         modelBuilder.Entity<OutreachMessage>().HasIndex(m => new { m.ProspectId, m.OccurredUtc });
         modelBuilder.Entity<ActivityEntry>().HasIndex(a => new { a.ProspectId, a.OccurredUtc });
+        var provider = modelBuilder.Entity<ProviderMessage>();
+        provider.Property(m => m.MailboxEmail).UseCollation("NOCASE");
+        provider.HasIndex(m => new { m.WorkspaceId, m.Provider, m.MailboxEmail, m.MessageId })
+            .IsUnique();
+        provider.HasIndex(m => m.OutreachMessageId).IsUnique();
+        provider.HasOne<Workspace>().WithMany().HasForeignKey(m => m.WorkspaceId)
+            .OnDelete(DeleteBehavior.Restrict);
+        provider.HasOne<Prospect>().WithMany()
+            .HasForeignKey(m => new { m.WorkspaceId, m.ProspectId })
+            .HasPrincipalKey(p => new { p.WorkspaceId, p.Id }).OnDelete(DeleteBehavior.Restrict);
+        provider.HasOne(m => m.Message).WithMany()
+            .HasForeignKey(m => new { m.ProspectId, m.OutreachMessageId })
+            .HasPrincipalKey(m => new { m.ProspectId, m.Id }).OnDelete(DeleteBehavior.Restrict);
+        provider.ToTable(t => t.HasCheckConstraint("CK_ProviderMessages_Identity",
+            "\"Provider\" = 'gmail' AND length(trim(\"MailboxEmail\")) > 0 " +
+            "AND length(trim(\"MessageId\")) > 0 AND length(trim(\"ThreadId\")) > 0"));
         base.OnModelCreating(modelBuilder);
     }
 }

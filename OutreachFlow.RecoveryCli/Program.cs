@@ -1,12 +1,13 @@
 using OutreachFlow.Services.Persistence;
 
 static string Usage() => """
-OutreachFlow local recovery + explicit EF migration baseline utility — no network access.
+OutreachFlow local recovery and explicit database upgrade utility — no network access.
 
 Commands:
   backup  <database-directory> <application-content-directory> <new-bundle-directory>
   verify  <bundle-directory>
   restore <bundle-directory> <new-empty-restore-directory>
+  upgrade <database-directory> <application-content-directory> <new-backup-directory>
   baseline inspect <database-directory>
   baseline adopt <database-directory> <application-content-directory> <new-backup-directory>
 
@@ -16,7 +17,7 @@ EXAMPLE from your repository root:
   dotnet run --project OutreachFlow.RecoveryCli -- restore ../OutreachFlow-backups/2026-11-11 ../OutreachFlow-restore-check
 
 IMPORTANT: Stop OutreachFlow before taking a consistent backup, adopting
-a migration baseline, or copying any restored database into the live installation.
+a migration baseline, upgrading, or copying restored data into the live installation.
 Baseline adoption requires a new verified backup first; it only creates the EF
 migration-history table, and never replays CREATE TABLE over existing records.
 Never restore over your existing files.
@@ -36,6 +37,10 @@ try
     LocalRecoveryBundle.Manifest bundle;
     switch (args[0].ToLowerInvariant())
     {
+        case "upgrade" when args.Length == 4:
+            await LegacyMigrationBaseline.UpgradeAsync(args[1], args[2], args[3]);
+            Console.WriteLine("Both databases upgraded and schema-verified. Keep the recovery bundle.");
+            break;
         case "backup" when args.Length == 4:
             bundle = await LocalRecoveryBundle.CreateAsync(args[1], args[2], args[3]);
             Console.WriteLine($"Recovery bundle created with {bundle.Files.Count} verified files.");
