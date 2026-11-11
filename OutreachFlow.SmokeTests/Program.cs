@@ -89,7 +89,8 @@ if (Environment.GetEnvironmentVariable("OUTREACHFLOW_BROWSER_TESTS") == "1")
                 "browser resource requests cannot leave the approved host");
             return Task.FromResult(new BrowserResource(200, "text/html", fixture));
         });
-    Check(html.Contains(expectedContent, StringComparison.Ordinal) && fetched > 0,
+    Check(html.Html.Contains(expectedContent, StringComparison.Ordinal) && fetched > 0 &&
+          html.FulfilledRequests > 0 && html.BlockedRequests == 0,
         "Chromium executes JavaScript and returns rendered HTML through the safe fetch callback");
 }
 
