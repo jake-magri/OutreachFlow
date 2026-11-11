@@ -2,7 +2,7 @@
 
 # Historical PR #11 — Google sign-in and read-only Gmail pilot
 
-> **Historical implementation/acceptance notes.** PR #11 is merged. Google sign-in and Gmail connection were reported working in the November 11 local pilot; **end-to-end actual reply import has not yet been verified**. Current status and exit gates: [ROADMAP.md](ROADMAP.md) and [AUDIT-2026-11-11.md](AUDIT-2026-11-11.md).
+> **Historical implementation/acceptance notes.** PR #11 is merged. Google sign-in and Gmail connection were reported working in the November 11 local pilot; **subsequent merged PR #27 records a genuine Gmail send and an end-to-end imported reply**. This historical read-only guide is superseded for current acceptance by [ROADMAP.md](ROADMAP.md) and [GMAIL-SENDING-PILOT.md](GMAIL-SENDING-PILOT.md). Current status and exit gates: [ROADMAP.md](ROADMAP.md) and [AUDIT-2026-11-11.md](AUDIT-2026-11-11.md).
 
 ## Purpose and security boundary
 
