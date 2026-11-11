@@ -3,6 +3,7 @@ using System.Net.Http.Headers;
 using System.Net.Sockets;
 using System.Text;
 using System.Text.RegularExpressions;
+using OutreachFlow.Services.Discovery;
 
 namespace OutreachFlow.Services.Research;
 
@@ -101,6 +102,7 @@ public sealed class OfficialSiteResearcher : IBrowserCompanyResearcher, IDisposa
         var candidates = new Dictionary<string, ResearchCandidate>(StringComparer.OrdinalIgnoreCase);
         var contacts = new Dictionary<string, ResearchContact>(StringComparer.OrdinalIgnoreCase);
         var diagnostics = new List<ResearchPageDiagnostic>();
+        var processLinks = new Dictionary<string, ProcessLinkEvidence>(StringComparer.OrdinalIgnoreCase);
         int skippedPages = 0;
         int browserAttempts = 0;
         int browserImproved = 0;
@@ -208,6 +210,11 @@ public sealed class OfficialSiteResearcher : IBrowserCompanyResearcher, IDisposa
             var observation = ExtractSnippet(page.Content, profile);
             if (!string.IsNullOrWhiteSpace(observation))
                 candidates[page.Url.AbsoluteUri] = new ResearchCandidate($"Page text: {title}", page.Url.AbsoluteUri, observation);
+            foreach (var link in ProcessLinkAnalyzer.Extract(page.Url, page.Content, profile))
+            {
+                if (processLinks.Count < 30)
+                    processLinks.TryAdd(link.DestinationUrl, link);
+            }
             foreach (var (url, anchor) in ExtractLinks(page.Url, page.Content))
             {
                 var score = ResearchProfileRules.ScoreLink(anchor + " " + url.AbsolutePath, profile);
@@ -247,7 +254,8 @@ public sealed class OfficialSiteResearcher : IBrowserCompanyResearcher, IDisposa
         {
             Contacts = contacts.Values.ToArray(),
             SuggestedReview = triage,
-            PageDiagnostics = diagnostics
+            PageDiagnostics = diagnostics,
+            ProcessLinks = processLinks.Values.ToArray()
         };
     }
 
