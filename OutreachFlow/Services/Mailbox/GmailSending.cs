@@ -73,7 +73,7 @@ public sealed partial class GmailMailboxService : IGmailSender
         if ((int)response.StatusCode is >= 400 and < 500 && (int)response.StatusCode != 408)
             throw new GmailRejectedException((int)response.StatusCode);
         response.EnsureSuccessStatusCode();
-        using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync(ct));
+        using var json = await BoundedJsonAsync(response, ct);
         return Delivery(json.RootElement);
     }
 
