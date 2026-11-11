@@ -12,7 +12,14 @@ This is the **second, isolated slice** of [issue #16](https://github.com/jake-ma
 - An explicit `baseline adopt` that requires a **new verified backup** and then inserts the current baseline migration ID into each existing DB's `__EFMigrationsHistory` table. This does **not** execute the baseline migrations' `CreateTable` code on legacy data.
 - Offline tests for both paths: fresh DBs built by `MigrateAsync`, legacy `EnsureCreatedAsync` databases with real rows, history adoption, unchanged rows, migration no-ops after adoption and drift rejection.
 
-**Important:** The running website's current `Program.cs` continues calling `EnsureCreatedAsync`, not `MigrateAsync`. Merging this PR does **not** automatically alter a user's existing database. The only write to an existing database happens if the operator explicitly invokes `baseline adopt`, and it adds migration-history metadata, not new business tables or columns.
+## What startup does
+
+- A missing or empty database is initialized from its compiled EF migrations.
+- An existing database with current migration history opens as-is.
+- A legacy database with no migration history can still open while the application ships only the initial migration for its context. To record the baseline, stop the app and run the backed-up adoption command below.
+- Startup blocks unexpected or pending migration history on an existing database. Future schema upgrades require a reviewed apply procedure.
+
+Each context follows these rules independently, including when one database has been adopted and the other is still legacy.
 
 ## Why this stage exists
 
@@ -28,7 +35,7 @@ From the repository root:
 
 ```powershell
 git fetch origin
-git switch --track origin/feature/persistence-ef-migrations-baseline
+git switch --track origin/feature/persistence-startup-migrations
 dotnet build OutreachFlow.slnx
 dotnet run --project OutreachFlow.SmokeTests
 ```
@@ -58,7 +65,7 @@ dotnet run --project OutreachFlow.RecoveryCli -- baseline adopt . OutreachFlow "
 
 The adopter creates and verifies the backup **before** changing either SQLite file. The two files are independent transactions: if one history stamp succeeds and the other fails, keep the backup, inspect, and retry after resolving the error. Do not delete the history manually.
 
-**Do not run `dotnet ef database update` on any populated legacy database to apply the initial migration.** The design-time factories intentionally target `:memory:` and are for scaffolding; they are not your application's configured runtime connections. EF migrations will only manage the running app's databases in a later reviewed PR, after verifying this baseline on existing data.
+**Do not run `dotnet ef database update` on any populated legacy database to apply the initial migration.** The design-time factories intentionally target `:memory:` and are for scaffolding; they are not your application's configured runtime connections. Use the recovery CLI to adopt the initial baseline on populated legacy databases. Existing databases with pending schema upgrades need a separate reviewed apply procedure.
 
 ## Future migration workflow
 
@@ -67,7 +74,7 @@ After adoption is accepted, future schema changes should:
 1. Update entity/model configuration and generate an incremental migration with the pinned `dotnet ef` tool.
 2. Review its Up/Down code, SQL operations, constraints, tenant ownership implications and compatibility with existing records.
 3. Test migration on both a fresh DB and a restored copy of a real legacy DB, including verifying data counts, foreign keys and history.
-4. Release under a separate deployment/apply gate; never combine `EnsureCreated` with `MigrateAsync` on the same new database.
+4. Release with a reviewed upgrade procedure for existing databases. Fresh databases are initialized from the compiled migrations.
 
 No new FK/uniqueness constraints or implicit `WorkspaceId = 1` changes are included here. Those need a follow-on migration and historical-data cleanup checks. Issue #16 remains open.
 

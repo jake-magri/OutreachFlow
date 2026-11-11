@@ -78,11 +78,16 @@ try
         await identity.SaveChangesAsync();
     }
 
+    await using (var business = new OutreachDbContext(legacyBusinessOptions))
+        await StartupDatabase.InitializeAsync(business);
+    await using (var identity = new AccountDbContext(legacyIdentityOptions))
+        await StartupDatabase.InitializeAsync(identity);
+
     var beforeAdoption = LegacyMigrationBaseline.Inspect(legacyDir);
     Check(beforeAdoption.Count == 2 && beforeAdoption.All(s =>
           s.SchemaMatches && !s.AlreadyAdopted &&
           s.MigrationId.StartsWith("2026", StringComparison.Ordinal)),
-        "both legacy EnsureCreated databases exactly match generated EF migration baselines");
+        "startup leaves both compatible legacy schemas without migration history");
     var adopted = await LegacyMigrationBaseline.AdoptAsync(legacyDir, auxDir, backup);
     Check(adopted.All(s => s.SchemaMatches && s.AlreadyAdopted) &&
           (await LocalRecoveryBundle.VerifyAsync(backup)).Files.Count == 2,
@@ -93,7 +98,7 @@ try
         Check((await business.Database.GetPendingMigrationsAsync()).Count() == 0 &&
               await business.Workspaces.CountAsync(w => w.BusinessName == "Preserve me") == 1,
             "existing business rows are retained and initial migration is recognized as applied");
-        await business.Database.MigrateAsync(); // Must do nothing except ensure EF metadata.
+        await StartupDatabase.InitializeAsync(business);
     }
     await using (var identity = new AccountDbContext(legacyIdentityOptions))
     {
@@ -101,7 +106,7 @@ try
               await identity.Users.AnyAsync(u => u.Id == ownerId) &&
               await identity.Memberships.AnyAsync(m => m.UserId == ownerId),
             "existing Google/password identity tables and owner membership survive baseline adoption");
-        await identity.Database.MigrateAsync();
+        await StartupDatabase.InitializeAsync(identity);
     }
 
     // A fresh install must be buildable entirely from the generated migrations.
@@ -110,12 +115,22 @@ try
     var freshIdentityOptions = new DbContextOptionsBuilder<AccountDbContext>()
         .UseSqlite("Data Source=" + Path.Combine(migratedDir, "outreachflow.auth.db")).Options;
     await using (var business = new OutreachDbContext(freshBusinessOptions))
-        await business.Database.MigrateAsync();
+        await StartupDatabase.InitializeAsync(business);
     await using (var identity = new AccountDbContext(freshIdentityOptions))
-        await identity.Database.MigrateAsync();
+        await StartupDatabase.InitializeAsync(identity);
     var freshStatus = LegacyMigrationBaseline.Inspect(migratedDir);
     Check(freshStatus.All(s => s.SchemaMatches && s.AlreadyAdopted),
         "fresh migration-created database schemas match EF EnsureCreated schemas");
+
+    await using (var business = new OutreachDbContext(freshBusinessOptions))
+    {
+        await StartupDatabase.InitializeAsync(business);
+        await business.Database.ExecuteSqlRawAsync("""
+            UPDATE "__EFMigrationsHistory" SET "MigrationId" = '20990101000000_Unknown';
+            """);
+        await MustReject(() => StartupDatabase.InitializeAsync(business),
+            "startup rejects migration history from an unknown version");
+    }
 
     await using (var business = new OutreachDbContext(legacyBusinessOptions))
         await business.Database.ExecuteSqlRawAsync(
