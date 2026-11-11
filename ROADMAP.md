@@ -22,7 +22,7 @@ Build a **configurable B2B opportunity-to-conversation pipeline**: find likely b
 
 The first recovery slice introduces an **operator-only** `OutreachFlow.RecoveryCli` that makes consistent SQLite snapshots, includes local profile/usage/mailbox files, verifies SHA-256 digests and database integrity, and restores only into a new directory. The operator must stop the app to obtain a coherent *multi-file* snapshot and must encrypt the backup. See [RECOVERY-PLAYBOOK.md](RECOVERY-PLAYBOOK.md).
 
-**This does not close #16:** The next persistence PR must use a disposable copy of a populated local database to establish non-destructive EF Core migrations for both contexts; validate constraints, actual before/after records, and rollback. Only then introduce provider message/thread IDs for issue #13 and an approval-gated outbox for issue #14. No database schema change or live sending is included in the recovery slice.
+**This PR's next persistence slice** establishes initial EF Core 10 migrations and model snapshots for both contexts, verifies fresh vs legacy schemas, and offers an explicit, backed-up adoption command for pre-existing `EnsureCreated` databases. The web app still does **not** run migrations at startup. See [MIGRATION-BASELINE.md](MIGRATION-BASELINE.md). #16 remains open for controlled migration rollout, new ownership/provider-ID constraints, and actual old-data recovery acceptance. Issue #13 tracks Gmail message/thread identity; issue #14 tracks approval-gated sending.
 
 ## Recommended build sequence (next PRs)
 
