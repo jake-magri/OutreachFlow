@@ -29,7 +29,7 @@ The provider identity slice adds mailbox/message/thread identity, unique import 
 ## Recommended build sequence
 
 1. **Completed:** migration-backed provider identity (#16 partial, PR #26) and supervised approved Gmail send/reply acceptance (PR #27, #14 implementation). Preserve the historical imported reply alongside structured provider identities; confirm backups before any future schema change.
-2. **Current engineering gate (#13, in progress):** require unambiguous, provider-confirmed sent-thread references before importing Gmail replies and bound Gmail JSON/MIME. Historical sender-only matches remain manual. Full CI and Windows acceptance are required before marking this complete; never trigger unattended actions from headers alone.
+2. **Current engineering gate (#13, in progress):** merged thread correlation and bounded Gmail parsing are reinforced by deterministic HTTP/MIME regression tests in the current candidate PR. See [GMAIL-CORRELATION-ACCEPTANCE.md](GMAIL-CORRELATION-ACCEPTANCE.md). Real-provider, read-only Windows observation remains required before marking #13 complete; unattended actions never rely solely on headers.
 3. Maintain the isolated Playwright UI harness (issue #20 partial) as authentication, workspaces and lifecycle controls evolve; simplify live/manual/simulated controls and test transitions (#21) without refactoring unrelated code.
 4. Implement durable, capped follow-up jobs with explicit pause/stop and safe reconciliation (#15), then pilot 5–10 qualified, approved accounts. No automatic sequence before #13.
 5. Based on real pilot friction, improve buyer-first discovery (#10) and account qualification/deduplication (#18).
