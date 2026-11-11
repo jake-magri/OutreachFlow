@@ -28,6 +28,33 @@ static async Task MustReject(Func<Task> action, string scenario)
     throw new Exception($"FAILED: {scenario}");
 }
 
+// Google-first signup requires a positive verified-email claim and never guesses.
+static System.Security.Claims.ClaimsPrincipal GooglePrincipal(string email, string verified)
+{
+    var identity = new System.Security.Claims.ClaimsIdentity("Google");
+    identity.AddClaim(new System.Security.Claims.Claim(
+        System.Security.Claims.ClaimTypes.Email, email));
+    identity.AddClaim(new System.Security.Claims.Claim("google_email_verified", verified));
+    return new System.Security.Claims.ClaimsPrincipal(identity);
+}
+Check(GoogleSignupPolicy.VerifiedEmail(GooglePrincipal("new-owner@example.org", "true"))
+          == "new-owner@example.org" &&
+      GoogleSignupPolicy.VerifiedEmail(GooglePrincipal("new-owner@example.org", "false"))
+          is null &&
+      GoogleSignupPolicy.VerifiedEmail(GooglePrincipal("not-an-email", "true"))
+          is null &&
+      GoogleSignupPolicy.VerifiedEmail(new System.Security.Claims.ClaimsPrincipal()) is null,
+    "Google-first registration requires a confirmed, syntactically valid email");
+var googleWorkspaceOne = GoogleSignupPolicy.NewWorkspace("first@example.org");
+var googleWorkspaceTwo = GoogleSignupPolicy.NewWorkspace("second@example.org");
+Check(googleWorkspaceOne.SenderEmail == "first@example.org" &&
+      googleWorkspaceTwo.SenderEmail == "second@example.org" &&
+      googleWorkspaceOne.BusinessName == "New workspace" &&
+      googleWorkspaceOne.Id == 0 && googleWorkspaceTwo.Id == 0 &&
+      string.IsNullOrWhiteSpace(googleWorkspaceOne.PostalAddress) &&
+      string.IsNullOrWhiteSpace(googleWorkspaceOne.TargetDescription),
+    "Google-first workspace defaults do not share IDs or invent business identity");
+
 // Google identity login and Gmail authorization intentionally share a configurable
 // OAuth client but retain separate callbacks/scopes and explicit account linking.
 var googleConfig = new Microsoft.Extensions.Configuration.ConfigurationBuilder()
