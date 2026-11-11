@@ -40,7 +40,7 @@
 <section class="panel spaced">
     <div class="panel-heading"><h2>Import prospects</h2><small>One prospect per line</small></div>
     <p>Format: <code>Company | Site/branch | Website | Business email</code>. Existing company/site pairs are skipped.</p>
-    <textarea class="textarea" rows="4" placeholder="Example Delivery Group | South Charlotte | https://example.com | vendors@example.com" @bind="csv"></textarea>
+    <textarea id="manual-import" class="textarea" rows="4" placeholder="Example Delivery Group | South Charlotte | https://example.com | vendors@example.com" @bind="csv"></textarea>
     <div class="actions"><button class="button primary" @onclick="Import" disabled="@busy">Import batch</button><span class="help">No emails are sent or websites fetched.</span></div>
     @if (!string.IsNullOrEmpty(notice)) { <div class="notice">@notice</div> }
 </section>
