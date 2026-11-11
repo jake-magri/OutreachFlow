@@ -80,9 +80,12 @@ public sealed class GoogleUserProvisioner(
         catch
         {
             // Compensation is best-effort, with an explicit error if it fails.
-            // Never log or sign in a partially provisioned identity.
+            // Never log or sign in a partially provisioned identity. Memberships
+            // are not configured as EF user dependents; remove them explicitly.
             if (newUser is not null)
             {
+                await accounts.Memberships
+                    .Where(m => m.UserId == newUser.Id).ExecuteDeleteAsync();
                 var linkedUser = await users.FindByIdAsync(newUser.Id);
                 if (linkedUser is not null)
                 {
