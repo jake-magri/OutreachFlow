@@ -10,8 +10,20 @@ namespace OutreachFlow.Services;
 public sealed record ProspectDetails(Prospect Prospect, List<ResearchEvidence> Evidence,
     List<OutreachMessage> Messages, List<ActivityEntry> Activity);
 
-public sealed class OutreachService(IDbContextFactory<OutreachDbContext> factory, IOutboundEmail mail, IWorkspaceAccess access, ICompanyResearcher? researcher = null)
+public sealed class OutreachService(IDbContextFactory<OutreachDbContext> factory, IOutboundEmail mail, IWorkspaceAccess access, ICompanyResearcher? researcher = null, IResearchProfileStore? profiles = null)
 {
+    public async Task<ResearchProfile> LoadResearchProfileAsync()
+    {
+        if (profiles is null) return ResearchProfileCatalog.Default();
+        return await profiles.LoadAsync(await access.ActiveWorkspaceIdAsync());
+    }
+
+    public async Task SaveResearchProfileAsync(ResearchProfile profile)
+    {
+        if (profiles is null) throw new InvalidOperationException("Research profile storage is unavailable.");
+        await profiles.SaveAsync(await access.ActiveWorkspaceIdAsync(), profile);
+    }
+
     public async Task<Workspace> LoadWorkspaceAsync()
     {
         await using var db = await factory.CreateDbContextAsync();
@@ -114,7 +126,10 @@ public sealed class OutreachService(IDbContextFactory<OutreachDbContext> factory
             throw new InvalidOperationException("Add a public company website to the prospect import before running research.");
 
         // Network work completes before any database state is changed.
-        var scan = await researcher.SearchAsync(p.Website, ct);
+        var profile = profiles is null
+            ? ResearchProfileCatalog.Default()
+            : await profiles.LoadAsync(workspaceId, ct);
+        var scan = await researcher.SearchAsync(p.Website, profile, ct);
         // Recheck after the network request in case another tab took ownership meanwhile.
         await db.Entry(p).ReloadAsync(ct);
         if (p.AutomationPaused || p.Attempts > 0 ||
