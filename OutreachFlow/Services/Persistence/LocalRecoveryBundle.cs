@@ -54,6 +54,7 @@ public static class LocalRecoveryBundle
                 var source = Path.Combine(dbRoot, name);
                 var dest = Path.Combine(staging, name);
                 BackupSqlite(source, dest);
+                NormalizeBackupJournal(dest);
                 VerifySqlite(dest);
                 records.Add(await RecordAsync(dest, name, ct));
             }
@@ -222,6 +223,37 @@ public static class LocalRecoveryBundle
         origin.Open();
         backup.Open();
         origin.BackupDatabase(backup);
+    }
+
+    /// <summary>
+    /// A source using SQLite WAL mode may produce a WAL-mode snapshot, creating
+    /// -wal/-shm sidecar files when inspected. The destination is our private,
+    /// freshly-created snapshot: checkpoint it and switch it to DELETE journal
+    /// mode before hashing. Never change the live source database.
+    /// </summary>
+    private static void NormalizeBackupJournal(string snapshotPath)
+    {
+        using (var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+        {
+            DataSource = snapshotPath, Mode = SqliteOpenMode.ReadWrite, Pooling = false
+        }.ToString()))
+        {
+            connection.Open();
+            using (var checkpoint = connection.CreateCommand())
+            {
+                checkpoint.CommandText = "PRAGMA wal_checkpoint(TRUNCATE);";
+                checkpoint.ExecuteNonQuery();
+            }
+            using var journal = connection.CreateCommand();
+            journal.CommandText = "PRAGMA journal_mode=DELETE;";
+            var mode = journal.ExecuteScalar()?.ToString();
+            if (!string.Equals(mode, "delete", StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException(
+                    "Unable to finalize SQLite snapshot in self-contained journal mode.");
+        }
+        if (File.Exists(snapshotPath + "-wal") || File.Exists(snapshotPath + "-shm"))
+            throw new InvalidOperationException(
+                "SQLite snapshot still has WAL/SHM sidecar files after normalization.");
     }
 
     private static void VerifySqlite(string database)

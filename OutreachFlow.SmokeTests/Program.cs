@@ -32,6 +32,106 @@ static async Task MustReject(Func<Task> action, string scenario)
     throw new Exception($"FAILED: {scenario}");
 }
 
+// EF Core migrations: validate a disposable legacy EnsureCreated database before
+// recording baseline history. No real user files are touched by these tests.
+var migrationTestRoot = Path.Combine(Path.GetTempPath(),
+    "outreachflow-migrations-" + Guid.NewGuid().ToString("N"));
+try
+{
+    var legacyDir = Path.Combine(migrationTestRoot, "legacy");
+    var auxDir = Path.Combine(migrationTestRoot, "content");
+    var backup = Path.Combine(migrationTestRoot, "safe-backup");
+    var migratedDir = Path.Combine(migrationTestRoot, "fresh-migrated");
+    Directory.CreateDirectory(legacyDir);
+    Directory.CreateDirectory(auxDir);
+    Directory.CreateDirectory(migratedDir);
+
+    var legacyBusinessOptions = new DbContextOptionsBuilder<OutreachDbContext>()
+        .UseSqlite("Data Source=" + Path.Combine(legacyDir, "outreachflow.db")).Options;
+    var legacyIdentityOptions = new DbContextOptionsBuilder<AccountDbContext>()
+        .UseSqlite("Data Source=" + Path.Combine(legacyDir, "outreachflow.auth.db")).Options;
+    string ownerId;
+    await using (var business = new OutreachDbContext(legacyBusinessOptions))
+    {
+        await business.Database.EnsureCreatedAsync();
+        business.Workspaces.Add(new Workspace { BusinessName = "Preserve me" });
+        await business.SaveChangesAsync();
+    }
+    await using (var identity = new AccountDbContext(legacyIdentityOptions))
+    {
+        await identity.Database.EnsureCreatedAsync();
+        var owner = new ApplicationUser
+        {
+            UserName = "legacy-owner@example.org",
+            NormalizedUserName = "LEGACY-OWNER@EXAMPLE.ORG",
+            Email = "legacy-owner@example.org",
+            NormalizedEmail = "LEGACY-OWNER@EXAMPLE.ORG",
+            ActiveWorkspaceId = 1
+        };
+        identity.Users.Add(owner);
+        await identity.SaveChangesAsync();
+        ownerId = owner.Id;
+        identity.Memberships.Add(new WorkspaceMembership
+        {
+            UserId = ownerId, WorkspaceId = 1, Role = "Owner"
+        });
+        await identity.SaveChangesAsync();
+    }
+
+    var beforeAdoption = LegacyMigrationBaseline.Inspect(legacyDir);
+    Check(beforeAdoption.Count == 2 && beforeAdoption.All(s =>
+          s.SchemaMatches && !s.AlreadyAdopted &&
+          s.MigrationId.StartsWith("2026", StringComparison.Ordinal)),
+        "both legacy EnsureCreated databases exactly match generated EF migration baselines");
+    var adopted = await LegacyMigrationBaseline.AdoptAsync(legacyDir, auxDir, backup);
+    Check(adopted.All(s => s.SchemaMatches && s.AlreadyAdopted) &&
+          (await LocalRecoveryBundle.VerifyAsync(backup)).Files.Count == 2,
+        "baseline adoption first writes a verified recovery bundle, then stamps both histories");
+
+    await using (var business = new OutreachDbContext(legacyBusinessOptions))
+    {
+        Check((await business.Database.GetPendingMigrationsAsync()).Count() == 0 &&
+              await business.Workspaces.CountAsync(w => w.BusinessName == "Preserve me") == 1,
+            "existing business rows are retained and initial migration is recognized as applied");
+        await business.Database.MigrateAsync(); // Must do nothing except ensure EF metadata.
+    }
+    await using (var identity = new AccountDbContext(legacyIdentityOptions))
+    {
+        Check((await identity.Database.GetPendingMigrationsAsync()).Count() == 0 &&
+              await identity.Users.AnyAsync(u => u.Id == ownerId) &&
+              await identity.Memberships.AnyAsync(m => m.UserId == ownerId),
+            "existing Google/password identity tables and owner membership survive baseline adoption");
+        await identity.Database.MigrateAsync();
+    }
+
+    // A fresh install must be buildable entirely from the generated migrations.
+    var freshBusinessOptions = new DbContextOptionsBuilder<OutreachDbContext>()
+        .UseSqlite("Data Source=" + Path.Combine(migratedDir, "outreachflow.db")).Options;
+    var freshIdentityOptions = new DbContextOptionsBuilder<AccountDbContext>()
+        .UseSqlite("Data Source=" + Path.Combine(migratedDir, "outreachflow.auth.db")).Options;
+    await using (var business = new OutreachDbContext(freshBusinessOptions))
+        await business.Database.MigrateAsync();
+    await using (var identity = new AccountDbContext(freshIdentityOptions))
+        await identity.Database.MigrateAsync();
+    var freshStatus = LegacyMigrationBaseline.Inspect(migratedDir);
+    Check(freshStatus.All(s => s.SchemaMatches && s.AlreadyAdopted),
+        "fresh migration-created database schemas match EF EnsureCreated schemas");
+
+    await using (var business = new OutreachDbContext(legacyBusinessOptions))
+        await business.Database.ExecuteSqlRawAsync(
+            "CREATE TABLE UnreviewedSchemaChange (Id INTEGER NOT NULL);");
+    var drift = LegacyMigrationBaseline.Inspect(legacyDir);
+    Check(drift.Any(s => !s.SchemaMatches), "out-of-band schema drift is detected");
+    await MustReject(() => LegacyMigrationBaseline.AdoptAsync(legacyDir,
+        auxDir, Path.Combine(migrationTestRoot, "unwanted-backup")),
+        "schema drift prevents stamping and does not create a misleading backup");
+}
+finally
+{
+    try { Directory.Delete(migrationTestRoot, recursive: true); }
+    catch { /* a test-only SQLite handle may remain on Windows */ }
+}
+
 // Local recovery: immutable, checked SQLite snapshots (not raw WAL/SHM copies),
 // auxiliary state backup and restore into a new directory only.
 var recoveryTestRoot = Path.Combine(Path.GetTempPath(),

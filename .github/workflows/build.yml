@@ -23,6 +23,13 @@ jobs:
         run: dotnet restore OutreachFlow.slnx
       - name: Build
         run: dotnet build OutreachFlow.slnx --no-restore --configuration Release
+      - name: Restore pinned EF Core tool
+        run: dotnet tool restore
+      - name: Ensure both EF models match the committed migration snapshots
+        shell: bash
+        run: |
+          dotnet ef migrations has-pending-model-changes --context OutreachDbContext --project OutreachFlow/OutreachFlow.csproj --startup-project OutreachFlow/OutreachFlow.csproj
+          dotnet ef migrations has-pending-model-changes --context AccountDbContext --project OutreachFlow/OutreachFlow.csproj --startup-project OutreachFlow/OutreachFlow.csproj
       - name: Smoke tests
         run: dotnet run --project OutreachFlow.SmokeTests/OutreachFlow.SmokeTests.csproj --configuration Release --no-build
       # Browser/real-site probes are opt-in local experiments. They must not run

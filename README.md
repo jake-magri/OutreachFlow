@@ -68,7 +68,7 @@ Secrets must remain in local development secret storage; never commit client sec
 - `mailbox-connections/`: encrypted workspace Gmail refresh tokens.
 - `mailbox-keys/`: DataProtection key ring, protected with current-user Windows DPAPI.
 
-**Local backup/restore foundation (issue #16, first slice):** after stopping the app, use `OutreachFlow.RecoveryCli` to snapshot both SQLite databases through SQLite's backup API and capture auxiliary local state, then verify checksums and restore into a new directory. See [RECOVERY-PLAYBOOK.md](RECOVERY-PLAYBOOK.md) for commands, privacy safeguards and manual acceptance. This is **operator-invoked**, not automated/production-ready. The bundle contains sensitive business records and OAuth key material and must be encrypted and protected. DPAPI-protected keys and tokens are not portable to a different Windows account/machine without deliberate recovery or reconnect. Both EF contexts still use `EnsureCreatedAsync`, not migrations. Do not delete databases to try a new branch.
+**Local backup/restore foundation (issue #16, first slice):** after stopping the app, use `OutreachFlow.RecoveryCli` to snapshot both SQLite databases through SQLite's backup API and capture auxiliary local state, then verify checksums and restore into a new directory. See [RECOVERY-PLAYBOOK.md](RECOVERY-PLAYBOOK.md) for commands, privacy safeguards and manual acceptance. This is **operator-invoked**, not automated/production-ready. The bundle contains sensitive business records and OAuth key material and must be encrypted and protected. DPAPI-protected keys and tokens are not portable to a different Windows account/machine without deliberate recovery or reconnect. Both EF contexts still use `EnsureCreatedAsync` at application startup. The generated initial migrations and a fail-closed, backed-up legacy adoption CLI are now included as an opt-in **migration baseline**; no application migrations run automatically yet. See [MIGRATION-BASELINE.md](MIGRATION-BASELINE.md). Do not delete databases to try a new branch.
 
 The app fails closed outside ASP.NET Core Development and refuses non-loopback requests. It is **not** safe to expose publicly or deploy using `Dockerfile.future`.
 
@@ -80,6 +80,7 @@ The app fails closed outside ASP.NET Core Development and refuses non-loopback r
 - [TRIAGE-PILOT.md](TRIAGE-PILOT.md): pilot classification and manual route-approval tests.
 - [MAILBOX-PILOT.md](MAILBOX-PILOT.md): Google OAuth and read-only mailbox pilot.
 - [RECOVERY-PLAYBOOK.md](RECOVERY-PLAYBOOK.md): local backup, integrity verification and restore-to-new-directory procedures.
+- [MIGRATION-BASELINE.md](MIGRATION-BASELINE.md): generated EF migrations, schema inspection and optional backed-up adoption.
 - [GitHub issues](https://github.com/jake-magri/OutreachFlow/issues): planned work and tracked technical debt.
 
 The historical PR-specific pilot notes describe how features were built at the time and are **not** the current product readiness checklist.
