@@ -210,6 +210,83 @@ public sealed class OutreachService(IDbContextFactory<OutreachDbContext> factory
         await db.SaveChangesAsync();
     }
 
+    // Records a human-confirmed send made in an external mailbox. This method NEVER sends email.
+    public async Task RecordExternalInitialSendAsync(int id)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        var workspaceId = await access.ActiveWorkspaceIdAsync();
+        var p = await db.Prospects.SingleAsync(x => x.Id == id && x.WorkspaceId == workspaceId);
+        if (p.Status != ProspectStatus.DraftReady || p.Attempts != 0 || p.AutomationPaused ||
+            string.IsNullOrWhiteSpace(p.DraftBody))
+            throw new InvalidOperationException("Prepare and review an eligible inquiry draft before logging an external send.");
+        await GuardRecipientAsync(db, p);
+        var settings = await db.Workspaces.SingleAsync(w => w.Id == workspaceId);
+        var now = DateTime.UtcNow;
+        p.Attempts = 1;
+        p.PlannedFollowups = settings.MaxFollowups;
+        p.FirstFollowupDelayDays = settings.FirstFollowupBusinessDays;
+        p.SecondFollowupDelayDays = settings.SecondFollowupBusinessDays;
+        p.NoResponseDelayDays = settings.NoResponseAfterBusinessDays;
+        p.SequenceTimeZoneId = settings.TimeZoneId;
+        p.SequenceStartHour = settings.SendingStartHour;
+        p.Status = ProspectStatus.AwaitingReply;
+        p.AutomationPaused = true; // An external mailbox is not connected; automation must not send.
+        p.NextStepDueUtc = null;
+        p.NextActionDate = DateOnly.FromDateTime(TimeZoneInfo.ConvertTimeFromUtc(
+            BusinessCalendar.AddBusinessDays(now, settings.FirstFollowupBusinessDays,
+                settings.TimeZoneId, settings.SendingStartHour), TimeZoneInfo.FindSystemTimeZoneById(settings.TimeZoneId)));
+        p.NextAction = "Review external mailbox and prepare first follow-up if no reply";
+        p.UpdatedUtc = now;
+        db.Messages.Add(new OutreachMessage
+        {
+            ProspectId = id, Direction = "Outbound", Classification = "Manually confirmed sent",
+            Subject = p.DraftSubject, Body = p.DraftBody, IsSimulation = false, OccurredUtc = now
+        });
+        AddActivity(db, id, "MANUAL SEND CONFIRMED",
+            "Owner confirmed sending the reviewed inquiry in an external mailbox. No email was sent by OutreachFlow.");
+        await db.SaveChangesAsync();
+    }
+
+    // An actual reply pasted by the owner; never claims automatic mailbox synchronization.
+    public async Task RecordExternalReplyAsync(int id, string body, ReplyCategory category)
+    {
+        if (string.IsNullOrWhiteSpace(body) || body.Length > 10000)
+            throw new InvalidOperationException("Paste a received reply (1–10,000 characters).");
+        await using var db = await factory.CreateDbContextAsync();
+        var workspaceId = await access.ActiveWorkspaceIdAsync();
+        var p = await db.Prospects.SingleAsync(x => x.Id == id && x.WorkspaceId == workspaceId);
+        if (p.Attempts == 0 || p.Status == ProspectStatus.Suppressed || p.Status == ProspectStatus.Closed)
+            throw new InvalidOperationException("A previously contacted, open prospect is required.");
+        if (!await db.Messages.AnyAsync(m => m.ProspectId == id && !m.IsSimulation && m.Direction == "Outbound"))
+            throw new InvalidOperationException("Log a real outgoing message before recording a real reply.");
+        db.Messages.Add(new OutreachMessage
+        {
+            ProspectId = id, Direction = "Inbound", Classification = category.ToString(),
+            Body = body.Trim(), IsSimulation = false, OccurredUtc = DateTime.UtcNow
+        });
+        p.Status = category switch
+        {
+            ReplyCategory.Interested => ProspectStatus.WarmLead,
+            ReplyCategory.Declined => ProspectStatus.Suppressed,
+            ReplyCategory.ApplicationInstructions => ProspectStatus.ApplicationTask,
+            _ => ProspectStatus.NeedsAction
+        };
+        p.AutomationPaused = true;
+        p.NextStepDueUtc = null;
+        p.NextAction = category switch
+        {
+            ReplyCategory.Interested => "Personally follow up with interested contact",
+            ReplyCategory.ApplicationInstructions => "Complete official supplier application",
+            ReplyCategory.Declined => "",
+            _ => "Review received reply and decide next step"
+        };
+        p.NextActionDate = null;
+        p.UpdatedUtc = DateTime.UtcNow;
+        AddActivity(db, id, "MANUAL REPLY RECORDED",
+            $"Owner entered actual response and classified it as {category}. Review before further action.");
+        await db.SaveChangesAsync();
+    }
+
     public async Task SimulateInitialSendAsync(int id)
     {
         await using var db = await factory.CreateDbContextAsync();
