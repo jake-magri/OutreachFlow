@@ -36,6 +36,7 @@ static async Task MustReject(Func<Task> action, string scenario)
 
 await ApprovedSendTests.RunAsync();
 await ProviderMessageTests.RunAsync();
+await GmailCorrelationTests.RunAsync();
 
 // EF Core migrations: validate a disposable legacy EnsureCreated database before
 // recording baseline history. No real user files are touched by these tests.
