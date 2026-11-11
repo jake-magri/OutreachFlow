@@ -81,6 +81,7 @@ The app fails closed outside ASP.NET Core Development and refuses non-loopback r
 - [TEST-CHECKLIST.md](TEST-CHECKLIST.md): manual acceptance checklist.
 - [TRIAGE-PILOT.md](TRIAGE-PILOT.md): pilot classification and manual route-approval tests.
 - [BROWSER-ACCEPTANCE.md](BROWSER-ACCEPTANCE.md): one-command Playwright acceptance, isolation and CI failure artifacts.
+- [GMAIL-CORRELATION-ACCEPTANCE.md](GMAIL-CORRELATION-ACCEPTANCE.md): deterministic Gmail payload/thread regressions and the outstanding one-time read-only live-provider acceptance.
 - [MAILBOX-PILOT.md](MAILBOX-PILOT.md): historical Google OAuth and read-only mailbox pilot; [GMAIL-SENDING-PILOT.md](GMAIL-SENDING-PILOT.md) documents the now-accepted one-message sending pilot.
 - [RECOVERY-PLAYBOOK.md](RECOVERY-PLAYBOOK.md): local backup, integrity verification and restore-to-new-directory procedures.
 - [MIGRATION-BASELINE.md](MIGRATION-BASELINE.md): generated EF migrations, schema inspection and optional backed-up adoption.
