@@ -44,26 +44,51 @@
             <h2>Indexed candidates — manual review</h2>
             <small>@batch.Candidates.Count suggestions · @batch.RetrievedUtc.ToString("u")</small>
         </div>
-        <p class="help">Choose a review queue for each result. These are organizational decisions, not confirmation that an application exists or outreach is permitted.</p>
-        <p class="help">Search snippets are not verified by OutreachFlow and are not stored as official evidence. Scores measure keyword relevance only—not the probability that a contract exists, the site's authenticity, or whether outreach is permitted.</p>
+        <p class="help">The app groups indexed results by a deterministic, explainable next-step suggestion. It never verifies that a source is official or that an application, contract or inquiry is appropriate. Inspect the source and approve or override the recommendation before saving.</p>
+        <p class="help">Relevance scores reflect keyword matches, not confidence or opportunity availability. Low-priority results remain visible rather than being discarded.</p>
         @foreach (var query in batch.Queries) { <p><small>Query: @query</small></p> }
         @foreach (var warning in batch.Warnings) { <p class="notice">@warning</p> }
         @if (batch.Candidates.Count == 0) { <p>No candidates were returned. This does not mean that no opportunities exist.</p> }
-        @foreach (var candidate in batch.Candidates)
+        @foreach (var nextStep in OpportunityTriage.DisplayOrder)
         {
-            <div class="evidence">
-                <strong>@candidate.Title</strong>
-                <p><small>Relevance @candidate.RelevanceScore / 100 · @candidate.Host · @candidate.SourceTier</small></p>
-                <p><strong>Intent hint:</strong> @candidate.IntentCategory</p>
-                <p class="help">@candidate.RankingReason</p>
-                <a href="@candidate.Url" target="_blank" rel="noopener noreferrer">Inspect original result</a>
-                <p>@candidate.Summary</p>
-                <div class="actions">
-                    <button class="button" @onclick="() => Route(candidate, DiscoveryRoute.FurtherResearch)" disabled="@busy">Research further</button>
-                    <button class="button" @onclick="() => Route(candidate, DiscoveryRoute.ApplicationReview)" disabled="@busy">Review application process</button>
-                    <button class="button" @onclick="() => Route(candidate, DiscoveryRoute.InquiryReview)" disabled="@busy">Review inquiry eligibility</button>
-                </div>
-            </div>
+            var candidates = batch.Candidates.Where(c => c.Suggestion.Step == nextStep).ToArray();
+            @if (candidates.Length > 0)
+            {
+                <h3>@OpportunityTriage.Label(nextStep) (@candidates.Length)</h3>
+                @foreach (var candidate in candidates)
+                {
+                    <div class="evidence">
+                        <strong>@candidate.Title</strong>
+                        <p><small>Relevance @candidate.RelevanceScore / 100 · @candidate.Host · @candidate.SourceTier</small></p>
+                        <p><strong>Intent hint:</strong> @candidate.IntentCategory</p>
+                        <p class="help">@candidate.RankingReason</p>
+                        <p><strong>Suggested next step:</strong> @candidate.Suggestion.Label</p>
+                        <p class="help">@candidate.Suggestion.Explanation</p>
+                        <a href="@candidate.Url" target="_blank" rel="noopener noreferrer">Inspect original result</a>
+                        <p>@candidate.Summary</p>
+                        @if (candidate.Suggestion.Route is DiscoveryRoute suggestedRoute)
+                        {
+                            <div class="actions">
+                                <button class="button primary" @onclick="() => Route(candidate, suggestedRoute)" disabled="@busy">Approve suggested route</button>
+                                <button class="button" @onclick="() => ToggleOverride(candidate.Url)" disabled="@busy">@(overrideUrls.Contains(candidate.Url) ? "Hide alternative routes" : "Choose a different route")</button>
+                            </div>
+                        }
+                        else
+                        {
+                            <p class="help">This result was deprioritized, not deleted. Review before changing its disposition.</p>
+                            <button class="button" @onclick="() => ToggleOverride(candidate.Url)" disabled="@busy">@(overrideUrls.Contains(candidate.Url) ? "Hide alternatives" : "Override and review this result")</button>
+                        }
+                        @if (overrideUrls.Contains(candidate.Url))
+                        {
+                            <div class="actions">
+                                <button class="button" @onclick="() => Route(candidate, DiscoveryRoute.FurtherResearch)" disabled="@busy">Research further</button>
+                                <button class="button" @onclick="() => Route(candidate, DiscoveryRoute.ApplicationReview)" disabled="@busy">Review application process</button>
+                                <button class="button" @onclick="() => Route(candidate, DiscoveryRoute.InquiryReview)" disabled="@busy">Review inquiry eligibility</button>
+                            </div>
+                        }
+                    </div>
+                }
+            }
         }
     </section>
 }
@@ -73,6 +98,12 @@
     private SearchBudgetSnapshot? budget;
     private bool busy;
     private string notice = "";
+    private readonly HashSet<string> overrideUrls = new(StringComparer.OrdinalIgnoreCase);
+
+    private void ToggleOverride(string url)
+    {
+        if (!overrideUrls.Add(url)) overrideUrls.Remove(url);
+    }
 
     protected override async Task OnInitializedAsync()
     {
@@ -85,11 +116,12 @@
         busy = true;
         notice = "";
         batch = null;
+        overrideUrls.Clear();
         try
         {
             batch = await Discovery.DiscoverAsync();
             budget = batch.Budget;
-            notice = $"Research suggestions retrieved from {batch.ProviderName}. Inspect sources before importing.";
+            notice = $"Research suggestions retrieved from {batch.ProviderName}. Confirm or override each suggested route after inspecting its source.";
         }
         catch (Exception ex)
         {
