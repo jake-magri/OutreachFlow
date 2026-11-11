@@ -8,8 +8,9 @@ using OutreachFlow.Models;
 namespace OutreachFlow.Services;
 
 /// <summary>
-/// Optional Google authentication for an existing account, based on Google's stable
-/// subject identifier. Email address alone never links or grants workspace access.
+/// Optional Google authentication and explicitly isolated first-time workspace
+/// provisioning, based on Google's stable subject identifier. Email address alone
+/// never links an existing identity or grants access to its workspaces.
 /// </summary>
 public static class GoogleSignInEndpoints
 {
@@ -39,24 +40,38 @@ public static class GoogleSignInEndpoints
         }).AllowAnonymous();
 
         app.MapGet("/account/google/callback", async (HttpContext context,
-            UserManager<ApplicationUser> users, SignInManager<ApplicationUser> signIn) =>
+            UserManager<ApplicationUser> users, SignInManager<ApplicationUser> signIn,
+            GoogleUserProvisioner provisioner) =>
         {
             var info = await signIn.GetExternalLoginInfoAsync();
             if (info is null || info.LoginProvider != Provider ||
                 string.IsNullOrWhiteSpace(info.ProviderKey))
                 return Results.Redirect("/account/login?google=failed");
-            var user = await users.FindByLoginAsync(info.LoginProvider, info.ProviderKey);
-            await context.SignOutAsync(IdentityConstants.ExternalScheme);
-            if (user is null)
+            try
             {
-                // Never auto-link existing identities using an email claim. Nor
-                // allow an unknown Google account to join the owner's workspace.
-                return Results.Redirect("/account/login?google=notlinked");
+                var user = await users.FindByLoginAsync(info.LoginProvider, info.ProviderKey);
+                if (user is null)
+                {
+                    var registration = await provisioner.RegisterAsync(info);
+                    if (registration.User is null)
+                        return Results.Redirect("/account/login?google=" + registration.Status);
+                    user = registration.User;
+                }
+                if (await users.IsLockedOutAsync(user))
+                    return Results.Redirect("/account/login?google=locked");
+                await signIn.SignInAsync(user, isPersistent: false,
+                    authenticationMethod: info.LoginProvider);
+                return Results.Redirect("/");
             }
-            if (await users.IsLockedOutAsync(user))
-                return Results.Redirect("/account/login?google=locked");
-            await signIn.SignInAsync(user, isPersistent: false, authenticationMethod: info.LoginProvider);
-            return Results.Redirect("/");
+            catch (Exception ex) when (ex is InvalidOperationException or DbUpdateException)
+            {
+                // No leaking of Google identity information or partial database state.
+                return Results.Redirect("/account/login?google=failed");
+            }
+            finally
+            {
+                await context.SignOutAsync(IdentityConstants.ExternalScheme);
+            }
         }).AllowAnonymous();
 
         // An authenticated local user explicitly connects a Google subject once.
