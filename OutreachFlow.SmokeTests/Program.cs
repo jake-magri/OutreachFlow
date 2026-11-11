@@ -67,6 +67,46 @@ Check(candidateRank.Count == 1 &&
       candidateRank[0].RelevanceScore > 0 &&
       candidateRank[0].SourceTier.Contains("unverified", StringComparison.OrdinalIgnoreCase),
     "indexed candidates are deduplicated, validated, scored and labeled unverified");
+var generalQueries = DeterministicQueryPlanner.Plan(ResearchProfileCatalog.Default(), "Charlotte North Carolina");
+Check(generalQueries.Count == 2 &&
+      generalQueries.All(q => !q.Contains("supplier supplier", StringComparison.OrdinalIgnoreCase)) &&
+      generalQueries.Distinct(StringComparer.OrdinalIgnoreCase).Count() == 2 &&
+      generalQueries.Any(q => q.Contains("vendor registration", StringComparison.OrdinalIgnoreCase)),
+    "general query planner avoids duplicate supplier terms and selects different buyer processes");
+var intentResults = OpportunityRanker.Rank(new[]
+{
+    ("procurement", new SearchListing("Registering in eVP | NC eProcurement",
+        "https://eprocurement.nc.gov/training/vendor-training/registering-evp",
+        "Electronic Vendor Portal allows vendors to register to do business with North Carolina")),
+    ("wholesale", new SearchListing("Pipe Supply Charlotte - Wholesale Products",
+        "https://americanstainlessandsupply.com/about/locations/pipe-supply-in-charlotte-nc",
+        "Request pricing for our wholesale pipe supply products and services")),
+    ("guide", new SearchListing("How to become a City of Charlotte Vendor",
+        "https://supplierdiversity.com/blog/how-to-become-a-vendor-for-the-city-of-charlotte",
+        "Guide to vendor registration and procurement"))
+}, ResearchProfileCatalog.Default());
+Check(intentResults.Count == 3 &&
+      intentResults[0].Host == "eprocurement.nc.gov" &&
+      intentResults[0].IntentCategory.Contains("buyer", StringComparison.OrdinalIgnoreCase) &&
+      intentResults.Single(x => x.Host.Contains("americanstainlessandsupply", StringComparison.OrdinalIgnoreCase))
+          .RelevanceScore <= 15 &&
+      intentResults.Single(x => x.Host.Contains("supplierdiversity", StringComparison.OrdinalIgnoreCase))
+          .IntentCategory.Contains("guide", StringComparison.OrdinalIgnoreCase),
+    "official-indexed process outranks irrelevant wholesale products and separates third-party guides");
+var sampleProcessLinks = ProcessLinkAnalyzer.Extract(
+    new Uri("https://city.example.org/vendor-process"),
+    "<html><body><a href='/vendors'>Vendor registration</a>" +
+    "<a href='https://forms.example.org/onboard'>Apply to become a vendor</a>" +
+    "<a href='http://127.0.0.1/private'>Supplier portal</a>" +
+    "<a href='javascript:alert(1)'>Supplier</a>" +
+    "<a href='https://city.example.org/privacy'>Privacy policy</a></body></html>",
+    ResearchProfileCatalog.Default());
+Check(sampleProcessLinks.Count == 2 &&
+      sampleProcessLinks.Single(x => x.DestinationUrl.Contains("forms.example.org"))
+          .Relationship == "Cross-domain link observed" &&
+      sampleProcessLinks.All(x => x.VerificationState.Contains("Unverified", StringComparison.Ordinal)),
+    "source-to-form relationship records provenance but never automatically verifies the third-party form");
+
 var tavilySample = TavilySearchProvider.ParseResults(
     """{"results":[{"title":"City supplier registration","url":"https://city.example.org/suppliers","content":"Public index summary"},{"title":"No URL"}]}""");
 Check(tavilySample.Count == 1 &&
@@ -322,14 +362,20 @@ try
     var researchId = (await researchFlow.ListProspectsAsync()).Single(p => p.CompanyName == "Website Research Co").Id;
     var scan = await researchFlow.ResearchCompanyAsync(researchId);
     var researched = (await researchFlow.GetDetailsAsync(researchId))!;
-    Check(scan.Candidates.Count == 2 && researched.Evidence.Count == 4 &&
+    Check(scan.Candidates.Count == 2 && researched.Evidence.Count == 5 &&
           researched.Prospect.Status == ProspectStatus.NeedsAction &&
           researched.Evidence.All(e => !e.IsOfficial),
           "research sources persist as unverified candidates requiring human review");
+    Check(researched.Evidence.Any(e =>
+          e.SourceUrl == "https://forms.example.org/vendor-application" &&
+          e.SourceTitle.StartsWith("Process link:", StringComparison.Ordinal) &&
+          e.ExcerptOrObservation.Contains("linked from https://www.example.org/vendors", StringComparison.Ordinal) &&
+          !e.IsOfficial),
+        "external vendor application link retains source provenance as unverified evidence");
     await MustReject(() => researchFlow.GenerateDraftAsync(researchId),
         "unreviewed research cannot generate an inquiry draft");
     await researchFlow.ResearchCompanyAsync(researchId);
-    Check((await researchFlow.GetDetailsAsync(researchId))!.Evidence.Count == 4,
+    Check((await researchFlow.GetDetailsAsync(researchId))!.Evidence.Count == 5,
         "repeated website scan does not duplicate the same evidence");
     var contactEvidence = (await researchFlow.GetDetailsAsync(researchId))!.Evidence
         .Single(e => e.SourceTitle == "Email candidate: procurement@example.org");
@@ -483,6 +529,9 @@ sealed class FakeResearcher : ICompanyResearcher
             new[] { "https://www.example.org/" },
             "Only public HTML pages were inspected.")
         {
+            ProcessLinks = [new ProcessLinkEvidence("https://www.example.org/vendors",
+                "https://forms.example.org/vendor-application", "Submit supplier application",
+                "Cross-domain link observed", "Possible registration, procurement or application link")],
             Contacts = [new ResearchContact("procurement@example.org", "https://www.example.org/contact",
                 "Publicly listed vendor email; verify ownership and relevance.")]
         });
