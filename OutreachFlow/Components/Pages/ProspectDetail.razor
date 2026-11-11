@@ -97,8 +97,9 @@ else
             @if (!string.IsNullOrWhiteSpace(p.DraftBody))
             {
                 <div class="field"><label>Subject</label><input value="@p.DraftSubject" readonly /></div>
-                <div class="field"><label>Body (review before future live sending)</label><textarea class="textarea" rows="9" readonly>@p.DraftBody</textarea></div>
+                <div class="field"><label>Body (review before sending)</label><textarea class="textarea" rows="9" readonly>@p.DraftBody</textarea></div>
             }
+            <OutreachFlow.Components.Shared.GmailSendPanel ProspectId="@Id" Eligible="@(p.Status == ProspectStatus.DraftReady && !p.AutomationPaused)" Changed="Reload" />
             @if (p.Status == ProspectStatus.DraftReady && !p.AutomationPaused)
             {
                 <div class="actions">

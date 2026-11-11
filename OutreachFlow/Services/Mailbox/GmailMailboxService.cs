@@ -12,7 +12,7 @@ using OutreachFlow.Data;
 
 namespace OutreachFlow.Services.Mailbox;
 
-public sealed record GmailConnection(string Email, string RefreshToken);
+public sealed record GmailConnection(string Email, string RefreshToken, bool SendApproved = false);
 public sealed record GmailInboxItem(string MessageId, string Sender, string Subject,
     string Body, DateTime ReceivedUtc, int ProspectId, string CompanyName, string ThreadId);
 
@@ -102,9 +102,10 @@ public static class MailboxOwner
     }
 }
 
-public sealed class GmailMailboxService(IConfiguration config, IHttpClientFactory clients,
+public sealed partial class GmailMailboxService(IConfiguration config, IHttpClientFactory clients,
     GmailConnectionStore store)
 {
+    public const string SendScope = "https://www.googleapis.com/auth/gmail.send";
     public const string ReadScope = "https://www.googleapis.com/auth/gmail.readonly";
     private const string AuthEndpoint = "https://accounts.google.com/o/oauth2/v2/auth";
     private const string TokenEndpoint = "https://oauth2.googleapis.com/token";
@@ -131,7 +132,7 @@ public sealed class GmailMailboxService(IConfiguration config, IHttpClientFactor
     public static string Challenge(string verifier) =>
         Base64Url(SHA256.HashData(Encoding.ASCII.GetBytes(verifier)));
 
-    public string AuthorizationUrl(string state, string challenge)
+    public string AuthorizationUrl(string state, string challenge, bool requestSend = false)
     {
         if (!IsConfigured) throw new InvalidOperationException("Gmail OAuth client and local callback are not configured.");
         var parameters = new Dictionary<string, string>
@@ -139,7 +140,7 @@ public sealed class GmailMailboxService(IConfiguration config, IHttpClientFactor
             ["client_id"] = config["Gmail:ClientId"]!,
             ["redirect_uri"] = config["Gmail:RedirectUri"]!,
             ["response_type"] = "code",
-            ["scope"] = ReadScope,
+            ["scope"] = requestSend ? ReadScope + " " + SendScope : ReadScope,
             ["access_type"] = "offline",
             ["prompt"] = "consent",
             ["state"] = state,
@@ -164,7 +165,7 @@ public sealed class GmailMailboxService(IConfiguration config, IHttpClientFactor
     }
 
     public async Task ConnectAsync(int workspaceId, string code, string verifier,
-        string expectedEmail, CancellationToken ct = default)
+        string expectedEmail, CancellationToken ct = default, bool requestSend = false)
     {
         if (!IsConfigured || code.Length is < 6 or > 2048 ||
             verifier.Length is < 43 or > 128)
@@ -185,7 +186,10 @@ public sealed class GmailMailboxService(IConfiguration config, IHttpClientFactor
         var mailbox = await ReadProfileEmailAsync(access.GetString()!, ct);
         if (!mailbox.Equals(expectedEmail, StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException("Connected Gmail account does not match this workspace's sender email.");
-        await store.SaveAsync(workspaceId, new GmailConnection(mailbox, refresh.GetString()!), ct);
+        var scopes = root.TryGetProperty("scope", out var granted) ? granted.GetString() ?? "" : "";
+        if (!HasScope(scopes, ReadScope) || (requestSend && !HasScope(scopes, SendScope)))
+            throw new InvalidOperationException("Required Gmail permission was not granted. Existing connection retained.");
+        await store.SaveAsync(workspaceId, new GmailConnection(mailbox, refresh.GetString()!, requestSend), ct);
     }
 
     private async Task<string> ReadProfileEmailAsync(string accessToken, CancellationToken ct)

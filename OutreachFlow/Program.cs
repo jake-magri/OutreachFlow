@@ -105,6 +105,9 @@ builder.Services.AddHttpClient("GmailApi", client => client.Timeout = TimeSpan.F
         AllowAutoRedirect = false, UseProxy = false
     });
 builder.Services.AddScoped<GmailMailboxService>();
+builder.Services.AddScoped<IGmailSender>(sp => sp.GetRequiredService<GmailMailboxService>());
+builder.Services.AddScoped<ApprovedSendService>();
+builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddScoped<OpportunityDiscoveryService>();
 builder.Services.AddScoped<OutreachService>();
 builder.Services.AddSingleton<IHtmlBrowserRenderer, PlaywrightHtmlBrowserRenderer>();

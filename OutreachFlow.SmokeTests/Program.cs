@@ -34,6 +34,7 @@ static async Task MustReject(Func<Task> action, string scenario)
     throw new Exception($"FAILED: {scenario}");
 }
 
+await ApprovedSendTests.RunAsync();
 await ProviderMessageTests.RunAsync();
 
 // EF Core migrations: validate a disposable legacy EnsureCreated database before

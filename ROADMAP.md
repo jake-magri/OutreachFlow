@@ -4,7 +4,7 @@
 
 Build a **configurable B2B opportunity-to-conversation pipeline**: find likely buyers or relevant official processes, record source-backed evidence, verify the correct approach, obtain sender/recipient approval, send a small number of legitimate inquiries, detect replies, stop inappropriate follow-ups and hand off meaningful decisions. Fleet washing is the first proof of value, not a hard-coded product restriction.
 
-**Current position — November 11, 2026:** local Google sign-in, Gmail authorization, owner-recorded sending and reviewed Gmail reply import have been exercised on the owner's Windows installation. The test reply was classified as declined, recorded with its Gmail audit ID and moved to Suppressed. PRs #23–25 added recovery bundles, EF baselines and migration-aware fresh startup. Real Gmail dispatch remains the next communication milestone.
+**Current position — November 11, 2026:** local Google sign-in, Gmail authorization, owner-recorded sending and reviewed Gmail reply import have been exercised on the owner's Windows installation. The test reply was classified as declined, recorded with its Gmail audit ID and moved to Suppressed. PRs #23–25 added recovery bundles, EF baselines and migration-aware fresh startup. PR #26 added provider identity and was validated on Windows. Controlled initial Gmail dispatch is implemented behind a disabled local toggle; real-mail acceptance remains pending.
 
 ### Current stages and exit gates
 
@@ -13,7 +13,7 @@ Build a **configurable B2B opportunity-to-conversation pipeline**: find likely b
 | 0. Foundation: .NET, auth, workspaces | Local implementation complete; production hardening not done | Two independent users/workspaces, blocked cross-access, local auth/cookie checks and passing smoke tests | Hosted use still gated by #16, #17, #22 |
 | 1. Search → process research → owner triage | Functionally implemented and live-pilot classified eight results | User can discover, identify false positives, inspect sources, route without auto-approval or messages, and preserve original evidence | Precision and account-level dedupe improvement #10, #18 |
 | 2. Google identity + authorized Gmail read-only | Owner tested connection, matching reply import and decline suppression; concurrent import protection covered by offline tests | Existing-account link and Google-first registration preserve separate workspaces; correct owner connects Gmail; one genuine reply reviewed, imported **once**, and audited; zero sends | Gmail correlation/reliability review #13 |
-| 3. Controlled real communication | **Not started** | Explicit, approved inquiry sends once from correct Gmail sender to authorized test mailbox; provider IDs persist; opt-out/closed/unknown delivery halt; full read/response loop reconciles | #13, #14, #16, #21 |
+| 3. Controlled real communication | Initial approved-send pilot implemented; live acceptance pending | Explicit, approved inquiry sends once from correct Gmail sender to authorized test mailbox; provider IDs persist; opt-out/closed/unknown delivery halt; full read/response loop reconciles | #13, #14, #16, #21 |
 | 4. Low-volume recurring outreach | **Not started** | 5–10 real, eligible, manually approved pilot accounts; idempotent job queue, send-time rechecks, 1–2 capped follow-ups, replies/negative signals immediately stop schedule, human dashboard matches audit | #15, #14, #13, business qualification #10/#18 |
 | 5. Hosted multi-tenant beta | **Not started** | Migration/backup/restore, auth/role recovery, rate limits, privacy and provider compliance, secure secrets, incident monitoring, threat-modelled crawler, isolated tenants, tested deployment/rollback | #16, #17, #19, #20, #22 |
 | 6. General SaaS | Out of current build scope | Multiple supported customer verticals, onboarding, billing, support, reliability metrics and successful private beta; external provider approvals complete | Depends on Stage 5 product/market validation |
@@ -28,8 +28,8 @@ The provider identity slice adds mailbox/message/thread identity, unique import 
 
 ## Recommended build sequence
 
-1. Validate the provider identity upgrade against the existing Windows installation, including the reply imported during the November 11 pilot. A new reply should store structured Gmail identity.
-2. Build one controlled Gmail send action (#14), including explicit permission upgrade, approved content and recipient, persistent outbox state and reconciliation after an uncertain response.
+1. Provider identity upgrade validated on Windows. Preserve both the historical reply and new structured identity.
+2. Validate the controlled Gmail send pilot (#14) using [GMAIL-SENDING-PILOT.md](GMAIL-SENDING-PILOT.md). Explicit permission, immutable approval, persistent outbox, limits and uncertain-result reconciliation are implemented; real Gmail acceptance is still pending.
 3. Link incoming replies to the provider-confirmed sent conversation (#13), with ambiguous matches presented for review.
 4. Add durable, capped follow-ups (#15) and clarify real-message controls (#21).
 5. Improve buyer-first discovery (#10) and account qualification/deduplication (#18) using pilot results.
