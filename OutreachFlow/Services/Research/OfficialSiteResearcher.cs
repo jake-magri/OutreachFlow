@@ -125,32 +125,70 @@ public sealed class OfficialSiteResearcher : IBrowserCompanyResearcher, IDisposa
             if (page.StatusCode != HttpStatusCode.OK || !page.IsHtml)
             {
                 skippedPages++;
+                diagnostics.Add(new ResearchPageDiagnostic(
+                    page.Url.AbsoluteUri, "(HTTP response unavailable)", 0, [], 
+                    "The server did not return a usable HTTP 200 HTML page.")
+                {
+                    HttpStatusCode = (int)page.StatusCode,
+                    InitialRuleId = page.IsHtml ? "http-status" : "http-status-or-media-type",
+                    BrowserDecision = useBrowser
+                        ? "Skipped: no approved HTML to render"
+                        : "Not requested"
+                });
                 continue;
             }
             pages.Add(page.Url.AbsoluteUri);
-            var diagnostic = ResearchPageInspector.Inspect(page.Url, page.Content, profile);
-            if (useBrowser && BrowserResearchPolicy.MayRender(diagnostic))
+            var diagnostic = ResearchPageInspector.Inspect(page.Url, page.Content, profile)
+                with { HttpStatusCode = (int)page.StatusCode };
+            if (useBrowser)
             {
-                browserAttempts++;
-                try
+                if (diagnostic.IsChallenge)
                 {
-                    var rendered = await renderer!.RenderAsync(root, page.Url,
-                        (target, token) => DownloadBrowserResourceAsync(root, target, robots, token),
-                        cancellationToken);
-                    var revised = ResearchPageInspector.Inspect(page.Url, rendered, profile);
-                    diagnostic = revised;
-                    if (!revised.IsInconclusive)
-                    {
-                        browserImproved++;
-                        page = page with { Content = rendered };
-                    }
+                    diagnostic = diagnostic with { BrowserDecision =
+                        "Skipped: access-challenge rule " + diagnostic.InitialRuleId +
+                        " matched phrase '" + diagnostic.MatchedPhrase + "'" };
                 }
-                catch (Exception ex) when (!cancellationToken.IsCancellationRequested &&
-                    ex is InvalidOperationException or IOException or TimeoutException or
-                        OperationCanceledException or Microsoft.Playwright.PlaywrightException)
+                else if (!BrowserResearchPolicy.MayRender(diagnostic))
                 {
-                    diagnostic = diagnostic with { Warning = diagnostic.Warning +
-                        " Browser rendering unavailable or incomplete; verify manually (" + ex.GetType().Name + ")." };
+                    diagnostic = diagnostic with { BrowserDecision =
+                        "Skipped: original HTML did not require rendering" };
+                }
+                else
+                {
+                    browserAttempts++;
+                    diagnostic = diagnostic with { BrowserDecision = "Attempted" };
+                    try
+                    {
+                        var rendered = await renderer!.RenderAsync(root, page.Url,
+                            (target, token) => DownloadBrowserResourceAsync(root, target, robots, token),
+                            cancellationToken);
+                        var revised = ResearchPageInspector.Inspect(page.Url, rendered, profile);
+                        if (!revised.IsInconclusive)
+                        {
+                            browserImproved++;
+                            page = page with { Content = rendered };
+                            diagnostic = revised with
+                            {
+                                HttpStatusCode = (int)page.StatusCode,
+                                BrowserDecision = "Rendered meaningful HTML; original rule: " + diagnostic.InitialRuleId
+                            };
+                        }
+                        else
+                        {
+                            diagnostic = diagnostic with { Warning = diagnostic.Warning +
+                                " Browser-rendered HTML was still inconclusive.",
+                                BrowserDecision = "Attempted; rendered result still inconclusive (" +
+                                    revised.InitialRuleId + ")" };
+                        }
+                    }
+                    catch (Exception ex) when (!cancellationToken.IsCancellationRequested &&
+                        ex is InvalidOperationException or IOException or TimeoutException or
+                            OperationCanceledException or Microsoft.Playwright.PlaywrightException)
+                    {
+                        diagnostic = diagnostic with { Warning = diagnostic.Warning +
+                            " Browser rendering unavailable or incomplete; verify manually.",
+                            BrowserDecision = "Attempted; failed (" + ex.GetType().Name + ")" };
+                    }
                 }
             }
             diagnostics.Add(diagnostic);
@@ -188,7 +226,7 @@ public sealed class OfficialSiteResearcher : IBrowserCompanyResearcher, IDisposa
                     candidates[key] = new ResearchCandidate("Link: " + Shorten(anchor, 100), key, detail);
             }
         }
-        if (pages.Count == 0)
+        if (pages.Count == 0 && diagnostics.Count == 0)
             throw new InvalidOperationException("No accessible HTML pages were retrieved (blocked, JavaScript-only, or incompatible site). Nothing was concluded.");
         var note = $"Checked {pages.Count} same-site HTML page(s), max {MaxPages}. " +
                    $"Experimental browser attempts: {browserAttempts}, meaningful rendered pages: {browserImproved}. " +
