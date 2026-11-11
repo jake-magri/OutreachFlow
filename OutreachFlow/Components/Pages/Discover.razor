@@ -44,6 +44,7 @@
             <h2>Indexed candidates — manual review</h2>
             <small>@batch.Candidates.Count suggestions · @batch.RetrievedUtc.ToString("u")</small>
         </div>
+        <p class="help">Choose a review queue for each result. These are organizational decisions, not confirmation that an application exists or outreach is permitted.</p>
         <p class="help">Search snippets are not verified by OutreachFlow and are not stored as official evidence. Scores measure keyword relevance only—not the probability that a contract exists, the site's authenticity, or whether outreach is permitted.</p>
         @foreach (var query in batch.Queries) { <p><small>Query: @query</small></p> }
         @foreach (var warning in batch.Warnings) { <p class="notice">@warning</p> }
@@ -58,7 +59,9 @@
                 <a href="@candidate.Url" target="_blank" rel="noopener noreferrer">Inspect original result</a>
                 <p>@candidate.Summary</p>
                 <div class="actions">
-                    <button class="button" @onclick="() => Import(candidate)" disabled="@busy">Add to prospects for verification</button>
+                    <button class="button" @onclick="() => Route(candidate, DiscoveryRoute.FurtherResearch)" disabled="@busy">Research further</button>
+                    <button class="button" @onclick="() => Route(candidate, DiscoveryRoute.ApplicationReview)" disabled="@busy">Review application process</button>
+                    <button class="button" @onclick="() => Route(candidate, DiscoveryRoute.InquiryReview)" disabled="@busy">Review inquiry eligibility</button>
                 </div>
             </div>
         }
@@ -96,16 +99,16 @@
         finally { busy = false; }
     }
 
-    private async Task Import(OpportunityCandidate candidate)
+    private async Task Route(OpportunityCandidate candidate, DiscoveryRoute route)
     {
         if (batch is null) return;
         busy = true;
         try
         {
-            var (added, skipped) = await Discovery.ImportReviewedAsync(batch.WorkspaceId, candidate);
-            notice = added > 0
-                ? "Added as an unverified prospect. Open Prospects, verify the official process, and record research evidence before taking action."
-                : $"Import skipped ({skipped}); this candidate may already be in your workspace.";
+            var result = await Discovery.RouteReviewedAsync(batch.WorkspaceId, candidate, route);
+            notice = result.Added
+                ? "Added to the selected review queue. Indexed evidence remains unverified; no email or application was submitted."
+                : "This source already exists in your workspace; its review status was not changed.";
         }
         catch (Exception ex) { notice = "Import failed: " + ex.Message; }
         finally { busy = false; }
