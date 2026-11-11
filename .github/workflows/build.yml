@@ -85,3 +85,22 @@ jobs:
               assert db.execute("select count(*) from Memberships").fetchone()[0] == 1
           print("PASS: fresh first-owner setup creates one private workspace, no demo prospects")
           PY
+
+  recovery-windows:
+    name: Windows recovery & smoke tests
+    runs-on: windows-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+      - name: Set up .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - name: Restore
+        run: dotnet restore OutreachFlow.slnx
+      - name: Build
+        run: dotnet build OutreachFlow.slnx --no-restore --configuration Release
+      - name: Verify backup/restore behavior on Windows
+        run: dotnet run --project OutreachFlow.SmokeTests/OutreachFlow.SmokeTests.csproj --configuration Release --no-build
+      - name: Verify recovery CLI executable
+        run: dotnet run --project OutreachFlow.RecoveryCli/OutreachFlow.RecoveryCli.csproj --configuration Release --no-build -- help
