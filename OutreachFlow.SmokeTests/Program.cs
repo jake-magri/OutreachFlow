@@ -5,6 +5,10 @@ using OutreachFlow.Services.Discovery;
 using OutreachFlow.Data;
 using OutreachFlow.Models;
 using OutreachFlow.Services;
+using OutreachFlow.Services.Mailbox;
+using Microsoft.AspNetCore.DataProtection;
+using System.Text;
+using System.Text.Json;
 
 static void Check(bool ok, string scenario)
 {
@@ -22,6 +26,71 @@ static async Task MustReject(Func<Task> action, string scenario)
     }
     throw new Exception($"FAILED: {scenario}");
 }
+
+// Gmail OAuth and message parser tests run offline; no mailbox or outbound send.
+Check(GmailMailboxService.IsAllowedRedirectUri("https://localhost:7117/mailbox/google/callback") &&
+      GmailMailboxService.IsAllowedRedirectUri("https://127.0.0.1:7117/mailbox/google/callback") &&
+      !GmailMailboxService.IsAllowedRedirectUri("http://localhost:7117/mailbox/google/callback") &&
+      !GmailMailboxService.IsAllowedRedirectUri("https://attacker.example.org/mailbox/google/callback") &&
+      !GmailMailboxService.IsAllowedRedirectUri("https://localhost:7117/mailbox/google/callback?next=evil"),
+    "Gmail OAuth redirect is limited to exact HTTPS loopback callback");
+var verifier = GmailMailboxService.NewVerifier();
+var challenge = GmailMailboxService.Challenge(verifier);
+Check(verifier.Length is >= 43 and <= 128 && challenge.Length == 43 &&
+      challenge != verifier && verifier != GmailMailboxService.NewVerifier(),
+    "Google PKCE uses a unique random verifier and SHA-256 challenge");
+
+var mailboxFixture = Path.Combine(Path.GetTempPath(), "outreachflow-gmail-" + Guid.NewGuid().ToString("N"));
+try
+{
+    Directory.CreateDirectory(mailboxFixture);
+    var keys = DataProtectionProvider.Create(new DirectoryInfo(Path.Combine(mailboxFixture, "keys")));
+    var store = new GmailConnectionStore(Path.Combine(mailboxFixture, "connections"), keys);
+    Check(await store.LoadAsync(1) is null, "no saved Gmail authorization is disconnected");
+    await store.SaveAsync(1, new GmailConnection("owner@example.org", "offline-refresh-token-fixture"));
+    var encryptedPath = Path.Combine(mailboxFixture, "connections", "workspace-1.protected");
+    var savedContent = await File.ReadAllTextAsync(encryptedPath);
+    var loaded = await store.LoadAsync(1);
+    Check(!savedContent.Contains("offline-refresh-token-fixture", StringComparison.Ordinal) &&
+          loaded?.Email == "owner@example.org" &&
+          loaded.RefreshToken == "offline-refresh-token-fixture" &&
+          await store.LoadAsync(2) is null,
+        "Gmail refresh tokens are protected at rest and isolated by workspace");
+    await store.DisconnectAsync(1);
+    Check(await store.LoadAsync(1) is null, "Gmail local authorization can be disconnected");
+}
+finally { try { Directory.Delete(mailboxFixture, recursive: true); } catch { } }
+
+var encodedBody = GmailMailboxService.Base64Url(Encoding.UTF8.GetBytes(
+    "Thanks, we are interested in a vendor call."));
+var receivedMillis = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+using var gmailMessage = JsonDocument.Parse($"""
+{
+  "internalDate": "{{receivedMillis}}",
+  "labelIds": ["INBOX"],
+  "payload": {
+    "mimeType": "text/plain",
+    "headers": [
+      {"name": "From", "value": "Vendor Team <procurement@example.org>"},
+      {"name": "Subject", "value": "Re: Fleet washing"}
+    ],
+    "body": {"data": "{{encodedBody}}"}
+  }
+}
+""");
+var parsedReply = GmailMailboxService.ParseInbound("provider-id-1", gmailMessage.RootElement,
+    10, "Buyer Co", "procurement@example.org");
+Check(parsedReply?.ProspectId == 10 &&
+      parsedReply.Sender == "procurement@example.org" &&
+      parsedReply.Body.Contains("interested in a vendor call", StringComparison.Ordinal) &&
+      parsedReply.Subject == "Re: Fleet washing" &&
+      GmailMailboxService.ParseInbound("provider-id-1", gmailMessage.RootElement,
+          10, "Buyer Co", "other@example.org") is null,
+    "Gmail reply parser requires exact recipient match and decodes plain text");
+using var malformedGmail = JsonDocument.Parse("""{"payload":{"headers":[]}}""");
+Check(GmailMailboxService.ParseInbound("provider-id-2", malformedGmail.RootElement,
+        10, "Buyer Co", "procurement@example.org") is null,
+    "malformed Gmail headers cannot generate an inbound reply");
 
 // Explicit developer-only live probe: same downloader, user-agent, redirect/robots rules
 // as the app. Logs only bounded public page metadata, not full HTML or script URLs.
