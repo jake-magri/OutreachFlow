@@ -1,4 +1,9 @@
-# FUTURE ONLY: DO NOT DEPLOY this unauthenticated prototype to the public internet.
+# FUTURE CONCEPT ONLY — NOT A SUPPORTED DEPLOYMENT ARTIFACT.
+# DO NOT DEPLOY: the application intentionally fails outside Development,
+# requires two business/auth SQLite contexts, local protected key storage,
+# and Windows DPAPI for the current Gmail pilot. Hosted security, backup,
+# OAuth verification and portable token storage are not implemented.
+# See AUDIT-2026-11-11.md and GitHub issue #22 before creating a real Dockerfile.
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /src
 COPY OutreachFlow/OutreachFlow.csproj OutreachFlow/
