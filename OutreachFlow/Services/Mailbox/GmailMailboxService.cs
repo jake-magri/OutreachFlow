@@ -217,7 +217,7 @@ public sealed partial class GmailMailboxService(IConfiguration config, IHttpClie
         return await BoundedJsonAsync(response, ct);
     }
 
-    private static async Task<JsonDocument> BoundedJsonAsync(HttpResponseMessage response, CancellationToken ct)
+    internal static async Task<JsonDocument> BoundedJsonAsync(HttpResponseMessage response, CancellationToken ct)
     {
         if (response.Content.Headers.ContentLength > MaxGmailJsonBytes)
             throw new InvalidOperationException("Gmail response exceeds the permitted size. Review manually.");
