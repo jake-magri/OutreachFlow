@@ -179,7 +179,11 @@ public sealed class OutreachService(IDbContextFactory<OutreachDbContext> factory
         foreach (var diagnostic in scan.PageDiagnostics.Where(x => x.IsInconclusive).Take(6))
         {
             var title = "Research warning: content incomplete";
-            var observation = $"Page title: {diagnostic.Title}; readable characters: {diagnostic.VisibleCharacters}. {diagnostic.Warning}";
+            var phrase = string.IsNullOrWhiteSpace(diagnostic.MatchedPhrase)
+                ? "none" : diagnostic.MatchedPhrase;
+            var observation = $"HTTP {diagnostic.HttpStatusCode}; title: {diagnostic.Title}; " +
+                $"readable characters: {diagnostic.VisibleCharacters}; rule: {diagnostic.InitialRuleId}; " +
+                $"matched phrase: {phrase}; browser: {diagnostic.BrowserDecision}. {diagnostic.Warning}";
             if (existing.Any(e => e.SourceUrl.Equals(diagnostic.Url, StringComparison.OrdinalIgnoreCase) &&
                 e.SourceTitle == title && e.ExcerptOrObservation == observation))
                 continue;
