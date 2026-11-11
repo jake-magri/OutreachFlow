@@ -11,6 +11,8 @@ public sealed record OpportunityCandidate(string Title, string Url, string Host,
     public string SourceTier => "Search-index candidate — unverified";
     public string IntentCategory { get; init; } = "Unclassified";
     public string RankingReason { get; init; } = "Keyword relevance only; verify the source.";
+    public TriageSuggestion Suggestion { get; init; } =
+        new(SuggestedNextStep.FurtherResearch, "Inspect the original indexed source.");
 }
 
 public interface IWebSearchProvider
@@ -66,8 +68,7 @@ public static class DeterministicQueryPlanner
         var terms = profile.ProcessTerms;
         bool Has(params string[] needles) => terms.Any(term =>
             needles.Any(needle => term.Contains(needle, StringComparison.OrdinalIgnoreCase)));
-        var isEmployment = Has("job openings", "career opportunities", "open positions",
-            "job listing", "employment", "driver hiring");
+        var isEmployment = OpportunityTriage.IsEmploymentProfile(profile);
         if (isEmployment)
             return ["job openings", "apply now", "career opportunities"];
 
@@ -173,14 +174,17 @@ public static class OpportunityRanker
             var candidate = new OpportunityCandidate(title, normalized, uri.Host, query, score, summary)
             {
                 IntentCategory = intent,
-                RankingReason = reason
+                RankingReason = reason,
+                Suggestion = OpportunityTriage.Recommend(text, profile, buyer, seller, commentary, job)
             };
             if (!candidates.TryGetValue(normalized, out var existing) ||
                 candidate.RelevanceScore > existing.RelevanceScore)
                 candidates[normalized] = candidate;
         }
 
-        return candidates.Values.OrderByDescending(x => x.RelevanceScore)
+        // Prioritize actionable review groups before high keyword scores on low-value listings.
+        return candidates.Values.OrderBy(x => x.Suggestion.Step)
+            .ThenByDescending(x => x.RelevanceScore)
             .ThenBy(x => x.Host, StringComparer.OrdinalIgnoreCase)
             .ThenBy(x => x.Url, StringComparer.OrdinalIgnoreCase)
             .Take(20).ToArray();
