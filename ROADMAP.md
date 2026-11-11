@@ -1,35 +1,57 @@
-# OutreachFlow roadmap
+# OutreachFlow roadmap — assessed November 11, 2026
 
-**North star:** a research-first business opportunity pipeline. The owner can initially seed 5–10 targets; the system should eventually discover permitted public opportunities, research their application processes and contacts, queue approved outreach, monitor responses, and hand off meaningful decisions. Commercial services and independent software contracting are two configurations of the same business-development product—not a W-2 application bot.
+## North star
 
-## Already merged in main
-- .NET 10 / Blazor, EF Core + local SQLite, local-first sign-in, workspace membership and data isolation
-- Prospect import, four queues, manual source verification, limited same-site research with SSRF/robots restrictions
-- Draft templates, simulations, bounded weekday sequence preview, opt-out guards, manual notes, CSV export
-- GitHub Actions CI
+Build a **configurable B2B opportunity-to-conversation pipeline**: find likely buyers or relevant official processes, record source-backed evidence, verify the correct approach, obtain sender/recipient approval, send a small number of legitimate inquiries, detect replies, stop inappropriate follow-ups and hand off meaningful decisions. Fleet washing is the first proof of value, not a hard-coded product restriction.
 
-## Development branches awaiting local review
-- PR #2: owner-confirmed external sends and pasted incoming replies, with audit history (no mailbox connection)
-- **This research PR:** visit relevant public contact pages, find email candidates in visible HTML and mailto references, save URLs/observations, suggest review priority, and allow explicit owner recipient approval. Keeps existing SQLite schema and simulation-only sending.
+**Current position: late local research and authorization prototype, before the first real provider-backed outbound communication milestone.** PRs #1–9 and #11 are merged; read-only Gmail OAuth has had an owner-reported successful connection. All latest main CI passed. Full inbound Gmail import and real send lifecycle are **not yet accepted**. Issue #10 tracks buyer/account-first discovery.
 
-## Next: complete a 5–10-company business outreach pilot
-1. Improve on-demand research coverage and category-specific qualification rules: service keywords, locality, vendor process requirements, and contact relevance. Use explicit states *verified process*, *possible process*, *no verified process in checked sources*, and *research blocked/incomplete*. No automatic negative conclusion from a sparse crawl.
-2. Integrate one authorized mailbox provider for actual outgoing and incoming message history, stable provider IDs, opt-out/bounce/complaint suppression and safe webhook/poll processing. Confirm mailbox provider and API suitability first.
-3. Introduce durable queued jobs, idempotent sends, rate/volume limits, sender identity/address, business day scheduling, pause and owner approval of initial campaign. A job must recheck process status, suppression, latest replies and ownership before each send.
-4. Run an approved low-volume pilot for 5–10 actual companies. Record time saved, manual interventions, discovered process accuracy, usable contacts, replies and handoffs.
-5. Connect a compliant keyword search API to feed candidate websites to the *existing* research step; add relevance and deduplication against historical contacts.
+### Current stages and exit gates
 
-## Later
-- PDF and third-party vendor portal discovery, with owner verification, limited supported form prefill for manual submission
-- A second **business services** strategy for independent software / .NET / automation contracting, RFPs and subcontract leads
-- Flexible outreach policies and configurable campaigns based on proven differences between the first two workflows
-- Public hosting: schema migrations, restore-tested backups, account recovery/invitations, audit/authorization review, secret management, operational alerts, and provider quotas
-- Subscription billing and self-serve SaaS only after a demonstrably useful and safe engine
+| Stage | Current status | Definition of done (DoD) | Blocking dependencies |
+| --- | --- | --- | --- |
+| 0. Foundation: .NET, auth, workspaces | Local implementation complete; production hardening not done | Two independent users/workspaces, blocked cross-access, local auth/cookie checks and passing smoke tests | Hosted use still gated by #16, #17, #22 |
+| 1. Search → process research → owner triage | Functionally implemented and live-pilot classified eight results | User can discover, identify false positives, inspect sources, route without auto-approval or messages, and preserve original evidence | Precision and account-level dedupe improvement #10, #18 |
+| 2. Google identity + authorized Gmail read-only | Connection tested by owner; provider-backed reply import unverified in live test | Existing-account link and Google-first registration preserve separate workspaces; correct owner connects Gmail; one genuine reply reviewed, imported **once**, and audited; zero sends | Gmail correlation/reliability review #13 |
+| 3. Controlled real communication | **Not started** | Explicit, approved inquiry sends once from correct Gmail sender to authorized test mailbox; provider IDs persist; opt-out/closed/unknown delivery halt; full read/response loop reconciles | #13, #14, #16, #21 |
+| 4. Low-volume recurring outreach | **Not started** | 5–10 real, eligible, manually approved pilot accounts; idempotent job queue, send-time rechecks, 1–2 capped follow-ups, replies/negative signals immediately stop schedule, human dashboard matches audit | #15, #14, #13, business qualification #10/#18 |
+| 5. Hosted multi-tenant beta | **Not started** | Migration/backup/restore, auth/role recovery, rate limits, privacy and provider compliance, secure secrets, incident monitoring, threat-modelled crawler, isolated tenants, tested deployment/rollback | #16, #17, #19, #20, #22 |
+| 6. General SaaS | Out of current build scope | Multiple supported customer verticals, onboarding, billing, support, reliability metrics and successful private beta; external provider approvals complete | Depends on Stage 5 product/market validation |
 
-## Non-goals now
-- Automated W-2 job applications or unapproved LinkedIn/Indeed scraping
-- Autonomous account signups or protected-portal submissions
-- General-purpose no-code designer and open public registration
-- Bulk unsolicited messaging without verified identity, limits and opt-out handling
+## Recommended build sequence (next PRs)
 
-The current app is a localhost-only Development prototype. Existing SQLite databases are retained to prioritize end-to-end functionality; migrations and deployment hardening are delayed, **not optional** before public launch.
+1. **Merge audit hygiene PR #12 after review**: stop startup demo seeding, close lifecycle loopholes, correct README/roadmap and add tests. Verify a fresh local password-owner setup and existing database.
+2. **Close Stage 2 acceptance** with a real *owner-confirmed* outbound message to a test recipient, matching Gmail inbox reply, manual one-time import and audit review. Do not call the inbox feature reliable synchronization yet. Work #13 is the long-term correction.
+3. **Data-model baseline before sending** (#16): introduce provider message IDs, unique constraints, approved-recipient/suppression model, backup/restore procedure and non-destructive migrations.
+4. **One controlled `gmail.send` action** (#14): separate consent, explicit review and confirmation, authenticated sender, idempotent outbox and manual reconciliation on ambiguous failure.
+5. **Reconcile inbox thread identity** (#13), then design durable paused follow-ups (#15) and clarify simulated-vs-real UI (#21).
+6. **Buyer-first account discovery** (#10) and shared dedupe/qualification (#18) should be prioritized from real pilot results; do not block mailbox correctness on speculative discovery feature complexity.
+7. **Limited measurable fleet-washing pilot**, followed by hosting/security gates (#16, #17, #19, #20, #22). Do not enable unsupervised prospect outreach before a low-volume explicit approval pilot succeeds.
+
+## Scope and business-value definitions
+
+**Local research MVP (usable today):** A human can research 5–10 companies, verify vendor processes, route prospects, prepare reviewed drafts, manually send from their own Gmail, log actual replies and manage next actions. This is a usable manual-assisted workflow, not full automation.
+
+**Communication MVP (next target):** Given one approved, inquiry-eligible contact and a verified Gmail sender, OutreachFlow sends exactly one authorized message and tracks a genuine response without duplicates or wrong-tenant access. Unsafe, ambiguous or undeliverable cases stop for review.
+
+**Automation MVP:** The app runs a limited, consented sequence reliably across restarts and cancels all future sends on reply, opt-out, bounce, owner action or eligibility change. The user can inspect every action and stop the sequence.
+
+**Private beta:** An external non-developer workspace owner can onboard and recover access, discover/qualify leads, connect mailbox, run a supervised pilot, restore their data, and understand privacy and sending limits without requiring direct database repair.
+
+### Suggested pilot scorecard
+
+Measure actual **time-to-verified-approach**, relevant accounts vs false matches, contacts/source provenance, approval interventions, actual sent/delivered/replied outcomes, duplicate-send count (target **zero**), opt-out handling (target **zero** post-opt-out sends), missed replies and warm-lead handoffs. A reply or sale is a business outcome, not a test precondition: evaluate workflow correctness even if no buyer responds.
+
+## Forecast — planning ranges, not commitments
+
+With one active developer and AI-assisted implementation, Stage 2 validation/hygiene can fit a short focused iteration. **Provider-backed real send + durable data model** may take roughly 2–4 focused engineering weeks, and safe scheduled automation plus a supervised pilot another 2–5, depending on testing, OAuth/provider behavior and scope. Public hosting and Google restricted-scope compliance can take substantially longer and are **not date-certain**; avoid estimating a public release date from today's working local OAuth connection.
+
+The true critical path is **persistent provider identity → safe dispatch → reply correlation → pause/reconcile → automated follow-ups**, not visual UI polish.
+
+## Current known maintenance and audit evidence
+
+See [AUDIT-2026-11-11.md](AUDIT-2026-11-11.md) for all reviewed source areas, findings, impact and remediation. GitHub issues #10 and #13–#22 are the tracked backlog. One-off notes describing old branches remain historical context, not the source of truth.
+
+## Explicit non-goals until the pilot succeeds
+
+No unattended job applications, login-gated scraping, automated portal submission, unauthorized email campaigns, blanket Gmail send grants, arbitrary tenants in public internet Development mode, or billing/subscription infrastructure before a demonstrable working and safe low-volume pipeline.
