@@ -255,6 +255,52 @@ public sealed class OfficialSiteResearcher : IBrowserCompanyResearcher, IDisposa
         $"Network: fulfilled={result.FulfilledRequests}, blocked={result.BlockedRequests}, " +
         $"blocked scripts={result.BlockedScriptRequests}, unsupported={result.UnsupportedRequests}, failed={result.FailedRequests}.";
 
+    /// <summary>
+    /// Diagnostic-only probe using the SAME protected downloader and user-agent as normal scans.
+    /// No cookies or complete HTML are exposed. Called only by an opt-in developer test.
+    /// </summary>
+    public async Task<PublicPageProbe> ProbeAsync(string website, CancellationToken ct = default)
+    {
+        var root = ResearchUrlPolicy.ParseWebsite(website);
+        var robotsUrl = new Uri(root.GetLeftPart(UriPartial.Authority) + "/robots.txt");
+        var robotsResponse = await DownloadAsync(root, robotsUrl, ct);
+        var robots = robotsResponse.StatusCode == HttpStatusCode.NotFound ? "" :
+            robotsResponse.StatusCode == HttpStatusCode.OK && !robotsResponse.IsHtml
+                ? robotsResponse.Content
+                : throw new InvalidOperationException("Probe stopped: robots.txt could not be verified.");
+        if (!RobotsAllow(robots, root))
+            throw new InvalidOperationException("Probe stopped: robots.txt excludes the requested page.");
+        var page = await DownloadAsync(root, root, ct, robots);
+        var html = page.Content;
+        var visible = Regex.Replace(
+            Regex.Replace(html, "<(script|style|noscript)\\b[^>]*>[\\s\\S]*?</\\1>", " ",
+                RegexOptions.IgnoreCase, TimeSpan.FromMilliseconds(200)),
+            "<[^>]*>", " ", RegexOptions.Singleline, TimeSpan.FromMilliseconds(200));
+        visible = Regex.Replace(WebUtility.HtmlDecode(visible), "\\s+", " ",
+            RegexOptions.None, TimeSpan.FromMilliseconds(200)).Trim();
+        var scriptTagCount = Regex.Matches(html, "<script\\b", RegexOptions.IgnoreCase,
+            TimeSpan.FromMilliseconds(200)).Count;
+        var scriptSrcs = Regex.Matches(html,
+            "<script\\b[^>]*\\bsrc\\s*=\\s*['\\\"](?<src>[^'\\\"]+)['\\\"]",
+            RegexOptions.IgnoreCase, TimeSpan.FromMilliseconds(200));
+        var externalScriptCount = 0;
+        var sameSiteScriptCount = 0;
+        foreach (Match m in scriptSrcs)
+        {
+            if (!Uri.TryCreate(page.Url, WebUtility.HtmlDecode(m.Groups["src"].Value),
+                out var src)) continue;
+            if (ResearchUrlPolicy.IsSameSite(root, src)) sameSiteScriptCount++;
+            else externalScriptCount++;
+        }
+        return new PublicPageProbe((int)page.StatusCode, page.IsHtml, html.Length,
+            ExtractTitle(html), visible[..Math.Min(240, visible.Length)], scriptTagCount,
+            sameSiteScriptCount, externalScriptCount);
+    }
+
+    public sealed record PublicPageProbe(int HttpStatus, bool IsHtml, int HtmlCharacters,
+        string Title, string ReadableTextPreview, int ScriptTags,
+        int SameSiteScriptSources, int CrossSiteScriptSources);
+
     private sealed record PageResponse(Uri Url, HttpStatusCode StatusCode, bool IsHtml, string Content);
 
     private async Task<PageResponse> DownloadAsync(Uri root, Uri target, CancellationToken ct, string? robotsText = null)
