@@ -24,6 +24,14 @@
 
 **Research notes:** City Charlotte supplier registration, QC trade partners, Crowder prequalification, C3 vendor form, Yonda partners, Tech-Army vendor onboarding, Spur hiring and Johnson Brothers Workday job page were directly indexed with the process details described above. No links here establish that a given prospect is actively buying the reader's service.
 
+## Observed pilot issue #1: City of Charlotte supplier registration
+
+**Initial local run (reported by owner):** HTTP 200 HTML was counted as one checked page, but the scanner returned **zero candidate references and zero email contacts**, despite this being a supplier-registration test URL. This is a **false negative / inconclusive extraction**, not evidence that the City lacks a supplier process.
+
+**PR #5 remediation:** pages with unusually little readable content, obvious block/challenge HTML, or a relevant URL with no matching readable terms produce a saved **Research warning: content incomplete** and an explicit inconclusive summary. The scanner no longer treats those pages as meaningful evidence of process absence. It does **not** bypass website defenses, execute browser JavaScript, or guarantee that the City page becomes parseable.
+
+**Retest:** scan the City entry again using the same profile. Expected acceptable results are either a genuine, source-backed supplier-process candidate or an explicit *research incomplete* warning with recorded page title, readable-character count and reason. A bare "no matching process" with zero warnings remains a bug. Verify the real official process in a browser and record an application handoff manually.
+
 ## Record this scorecard for each site
 
 - Website reachable? (yes/no; record reason)
