@@ -347,7 +347,7 @@ public sealed class OutreachService(IDbContextFactory<OutreachDbContext> factory
         p.SequenceTimeZoneId = settings.TimeZoneId;
         p.SequenceStartHour = settings.SendingStartHour;
         p.Status = ProspectStatus.AwaitingReply;
-        p.AutomationPaused = true; // An external mailbox is not connected; automation must not send.
+        p.AutomationPaused = true; // Manually attested delivery; unattended Gmail sending is not implemented.
         p.NextStepDueUtc = null;
         p.NextActionDate = DateOnly.FromDateTime(TimeZoneInfo.ConvertTimeFromUtc(
             BusinessCalendar.AddBusinessDays(now, settings.FirstFollowupBusinessDays,
