@@ -84,6 +84,7 @@ public sealed class OfficialSiteResearcher : ICompanyResearcher, IDisposable
 
         var pages = new List<string>();
         var candidates = new Dictionary<string, ResearchCandidate>(StringComparer.OrdinalIgnoreCase);
+        var contacts = new Dictionary<string, ResearchContact>(StringComparer.OrdinalIgnoreCase);
         var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var queue = new Queue<Uri>();
         queue.Enqueue(root);
@@ -103,6 +104,12 @@ public sealed class OfficialSiteResearcher : ICompanyResearcher, IDisposable
             }
             if (page.StatusCode != HttpStatusCode.OK || !page.IsHtml) continue;
             pages.Add(page.Url.AbsoluteUri);
+            foreach (var contact in PublicContactExtractor.Extract(page.Content, page.Url))
+            {
+                if (contacts.Count >= 30) break;
+                // Distinct email addresses need only their first, provenance-bearing checked page.
+                contacts.TryAdd(contact.Address, contact);
+            }
             var title = ExtractTitle(page.Content);
             var observation = ExtractSnippet(page.Content);
             if (!string.IsNullOrWhiteSpace(observation))
@@ -110,7 +117,7 @@ public sealed class OfficialSiteResearcher : ICompanyResearcher, IDisposable
             foreach (var (url, anchor) in ExtractLinks(page.Url, page.Content))
             {
                 var score = Score(anchor + " " + url.AbsolutePath);
-                if (score < 3 || candidates.Count >= 16) continue;
+                if (score < 1) continue;
                 var same = ResearchUrlPolicy.IsSameSite(root, url);
                 if (same)
                 {
@@ -121,7 +128,7 @@ public sealed class OfficialSiteResearcher : ICompanyResearcher, IDisposable
                     ? "Relevant link found on " + page.Url.AbsoluteUri + ". Review its applicability; this is not a confirmed vendor process."
                     : "External destination LINKED FROM " + page.Url.AbsoluteUri + "; not fetched. Verify it belongs to the company before using.";
                 var key = url.AbsoluteUri;
-                if (!candidates.ContainsKey(key))
+                if (!candidates.ContainsKey(key) && candidates.Count < 24)
                     candidates[key] = new ResearchCandidate("Link: " + Shorten(anchor, 100), key, detail);
             }
         }
@@ -131,7 +138,22 @@ public sealed class OfficialSiteResearcher : ICompanyResearcher, IDisposable
                    "Links are suggestions, not proof of an accepted supplier process. " +
                    "PDFs, third-party portals, dynamic pages and search-engine results were not inspected. " +
                    "Do not mark 'No process found' without additional manual checking.";
-        return new ResearchScan(candidates.Values.Take(12).ToArray(), pages, note);
+        var possibleProcess = candidates.Values.Any(x =>
+            x.Title.Contains("supplier", StringComparison.OrdinalIgnoreCase) ||
+            x.Title.Contains("vendor", StringComparison.OrdinalIgnoreCase) ||
+            x.Title.Contains("procurement", StringComparison.OrdinalIgnoreCase) ||
+            x.Title.Contains("register", StringComparison.OrdinalIgnoreCase) ||
+            x.Title.Contains("subcontract", StringComparison.OrdinalIgnoreCase));
+        var triage = possibleProcess
+            ? "Potential supplier/application reference found: verify the process and whether your service qualifies before assigning a route."
+            : contacts.Count > 0
+                ? "Published contact candidates found, but no verified application process. Continue manual source review before inquiry eligibility."
+                : "No clear vendor process or contact discovered in checked HTML. Review additional sources; absence is not proof.";
+        return new ResearchScan(candidates.Values.Take(16).ToArray(), pages, note)
+        {
+            Contacts = contacts.Values.ToArray(),
+            SuggestedReview = triage
+        };
     }
 
     private sealed record PageResponse(Uri Url, HttpStatusCode StatusCode, bool IsHtml, string Content);
