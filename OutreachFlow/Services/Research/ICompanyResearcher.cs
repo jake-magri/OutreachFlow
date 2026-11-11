@@ -17,4 +17,8 @@ public sealed record ResearchScan(IReadOnlyList<ResearchCandidate> Candidates,
 public interface ICompanyResearcher
 {
     Task<ResearchScan> SearchAsync(string website, CancellationToken cancellationToken = default);
+
+    // Existing research adapters continue working; production crawler honors the explicit profile.
+    Task<ResearchScan> SearchAsync(string website, ResearchProfile profile, CancellationToken cancellationToken = default)
+        => SearchAsync(website, cancellationToken);
 }
