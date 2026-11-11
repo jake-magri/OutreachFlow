@@ -139,8 +139,9 @@ using (var scope = app.Services.CreateScope())
 {
     var factory = scope.ServiceProvider.GetRequiredService<IDbContextFactory<OutreachDbContext>>();
     await using var db = await factory.CreateDbContextAsync();
-    await db.Database.EnsureCreatedAsync(); // Existing business database remains intact.
-    await DemoData.SeedAsync(db);
+    // Preserve existing business data. New users' workspaces are provisioned
+    // only during first-owner setup or Google-first registration, not at startup.
+    await db.Database.EnsureCreatedAsync();
     var authFactory = scope.ServiceProvider.GetRequiredService<IDbContextFactory<AccountDbContext>>();
     await using var authDb = await authFactory.CreateDbContextAsync();
     await authDb.Database.EnsureCreatedAsync(); // Separate local auth database; migrations are a follow-up.
