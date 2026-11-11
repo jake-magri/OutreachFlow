@@ -11,6 +11,8 @@ public sealed record OpportunityCandidate(string Title, string Url, string Host,
     public string SourceTier => "Search-index candidate — unverified";
     public string IntentCategory { get; init; } = "Unclassified";
     public string RankingReason { get; init; } = "Keyword relevance only; verify the source.";
+    public TriageSuggestion Suggestion { get; init; } =
+        new(SuggestedNextStep.FurtherResearch, "Inspect the original indexed source.");
 }
 
 public interface IWebSearchProvider
@@ -66,8 +68,7 @@ public static class DeterministicQueryPlanner
         var terms = profile.ProcessTerms;
         bool Has(params string[] needles) => terms.Any(term =>
             needles.Any(needle => term.Contains(needle, StringComparison.OrdinalIgnoreCase)));
-        var isEmployment = Has("job openings", "career opportunities", "open positions",
-            "job listing", "employment", "driver hiring");
+        var isEmployment = OpportunityTriage.IsEmploymentProfile(profile);
         if (isEmployment)
             return ["job openings", "apply now", "career opportunities"];
 
@@ -102,13 +103,18 @@ public static class OpportunityRanker
         "subcontractor prequalification", "trade partner registration",
         "procurement opportunities", "bid opportunities", "request for proposal",
         "supplier application", "supplier portal", "electronic vendor portal",
-        "contract opportunities", "open solicitations"
+        "contract opportunities", "open solicitations",
+        "new vendor setup", "vendor setup form", "vendor onboarding",
+        "supplier onboarding", "service provider application"
     ];
     private static readonly string[] SellingGoodsSignals =
     [
         "wholesale", "wholesaler", "distributor", "wholesale supplier",
         "supply company", "pipe supply", "request pricing",
-        "start a quote", "products & services", "product catalog"
+        "start a quote", "products & services", "product catalog",
+        "washing supplies", "wash chemicals", "truck wash chemicals",
+        "cleaning supplies", "authorized dealer", "dealer information",
+        "equipment for sale"
     ];
     private static readonly string[] CommentarySignals =
     [
@@ -118,7 +124,9 @@ public static class OpportunityRanker
     private static readonly string[] JobSignals =
     [
         "job openings", "apply for a job", "apply now", "career opportunities",
-        "open positions", "employment opportunities", "delivery driver jobs"
+        "open positions", "employment opportunities", "delivery driver jobs",
+        "now hiring", "truck washing jobs", "job listings",
+        "jobs in charlotte", "/jobs.html", "/careers", "indeed.com"
     ];
 
     public static IReadOnlyList<OpportunityCandidate> Rank(
@@ -152,7 +160,9 @@ public static class OpportunityRanker
             bool buyer = Any(text, BuyerProcessSignals);
             bool seller = Any(text, SellingGoodsSignals);
             bool commentary = Any(text, CommentarySignals);
-            bool job = Any(text, JobSignals);
+            bool job = Any(text, JobSignals) ||
+                uri.Host.Equals("indeed.com", StringComparison.OrdinalIgnoreCase) ||
+                uri.Host.EndsWith(".indeed.com", StringComparison.OrdinalIgnoreCase);
             // These are explainable *hints*, not company ownership checks or
             // claims about availability. A supplier can also be a buyer.
             var intent = seller && !buyer ? "Selling goods / possible false match" :
@@ -173,14 +183,17 @@ public static class OpportunityRanker
             var candidate = new OpportunityCandidate(title, normalized, uri.Host, query, score, summary)
             {
                 IntentCategory = intent,
-                RankingReason = reason
+                RankingReason = reason,
+                Suggestion = OpportunityTriage.Recommend(text, profile, buyer, seller, commentary, job)
             };
             if (!candidates.TryGetValue(normalized, out var existing) ||
                 candidate.RelevanceScore > existing.RelevanceScore)
                 candidates[normalized] = candidate;
         }
 
-        return candidates.Values.OrderByDescending(x => x.RelevanceScore)
+        // Prioritize actionable review groups before high keyword scores on low-value listings.
+        return candidates.Values.OrderBy(x => x.Suggestion.Step)
+            .ThenByDescending(x => x.RelevanceScore)
             .ThenBy(x => x.Host, StringComparer.OrdinalIgnoreCase)
             .ThenBy(x => x.Url, StringComparer.OrdinalIgnoreCase)
             .Take(20).ToArray();

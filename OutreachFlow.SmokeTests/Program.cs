@@ -93,6 +93,120 @@ Check(intentResults.Count == 3 &&
       intentResults.Single(x => x.Host.Contains("supplierdiversity", StringComparison.OrdinalIgnoreCase))
           .IntentCategory.Contains("guide", StringComparison.OrdinalIgnoreCase),
     "official-indexed process outranks irrelevant wholesale products and separates third-party guides");
+
+var procurementResult = intentResults.Single(x => x.Host == "eprocurement.nc.gov");
+var wholesaleResult = intentResults.Single(x => x.Host.Contains("americanstainlessandsupply", StringComparison.OrdinalIgnoreCase));
+var guideResult = intentResults.Single(x => x.Host.Contains("supplierdiversity", StringComparison.OrdinalIgnoreCase));
+Check(procurementResult.Suggestion.Step == SuggestedNextStep.ApplicationReview &&
+      wholesaleResult.Suggestion.Step == SuggestedNextStep.Deprioritize &&
+      guideResult.Suggestion.Step == SuggestedNextStep.Deprioritize &&
+      procurementResult.Suggestion.Explanation.Contains("Verify", StringComparison.OrdinalIgnoreCase) &&
+      intentResults[0].Suggestion.Step == SuggestedNextStep.ApplicationReview,
+    "indexed buyer registration is recommended for application review; product sellers and guides are deprioritized");
+
+var triageFixtures = OpportunityRanker.Rank(new[]
+{
+    ("inquiry", new SearchListing("Procurement contact",
+        "https://fleetbuyer.example.org/contact", "Fleet services vendor inquiries: contact procurement for questions")),
+    ("unknown", new SearchListing("Facilities department",
+        "https://facilities.example.org/about", "Information about local facilities operations")),
+    ("job", new SearchListing("Delivery driver jobs",
+        "https://carrier.example.org/careers", "Job openings for delivery drivers. Apply now")),
+    ("mixed", new SearchListing("Vendor registration and job openings",
+        "https://mixed.example.org/vendor", "Register as a vendor or view job openings")),
+    ("supplier", new SearchListing("Wholesale pipe supply and vendor registration",
+        "https://mixedseller.example.org/vendors", "Wholesale products and supplier registration"))
+}, ResearchProfileCatalog.Default());
+Check(triageFixtures.Single(x => x.Host == "fleetbuyer.example.org")
+          .Suggestion.Step == SuggestedNextStep.InquiryReview &&
+      triageFixtures.Single(x => x.Host == "facilities.example.org")
+          .Suggestion.Step == SuggestedNextStep.FurtherResearch &&
+      triageFixtures.Single(x => x.Host == "carrier.example.org")
+          .Suggestion.Step == SuggestedNextStep.Deprioritize &&
+      triageFixtures.Single(x => x.Host == "mixed.example.org")
+          .Suggestion.Step == SuggestedNextStep.FurtherResearch &&
+      triageFixtures.Single(x => x.Host == "mixedseller.example.org")
+          .Suggestion.Step == SuggestedNextStep.FurtherResearch,
+    "inquiry signals suggest review; unclear and mixed evidence stays conservative; irrelevant jobs rank low");
+
+// Real-world Nov 11 pilot cases expressed as offline indexed fixtures.
+// Treat these as classification regressions, not as evidence the sites are official.
+var pilotTriage = OpportunityRanker.Rank(new[]
+{
+    ("fleet", new SearchListing("The City of Charlotte's Request for Proposal (RFP) #269",
+        "https://evp.nc.gov/solicitation/269", "Biodegradable products and city government services")),
+    ("fleet", new SearchListing("Contract Opportunities - City of Charlotte",
+        "https://www.charlottenc.gov/Growth-and-Development/Doing-Business/Contract-Opportunities",
+        "A centralized source for the City's contracting opportunities, including active solicitations")),
+    ("fleet", new SearchListing("Semi-Truck & Fleet Washing Supplies in Charlotte, NC",
+        "https://fleetwashsupply.example.org/pages/charlotte-nc-fleet-washing-supplies",
+        "Carry our truck wash chemicals and equipment. Authorized dealer information.")),
+    ("fleet", new SearchListing("Onsite Fleet Washing Charlotte NC | Commercial Fleet Cleaning",
+        "https://cleanfleet.example.org/",
+        "We are a recurring commercial fleet washing company. We wash trucks and trailers on site.")),
+    ("fleet", new SearchListing("New Vendor Setup Form | Vector",
+        "https://vectorfleet.example.org/new-vendor-setup-form",
+        "New Vendor Setup Form and fleet maintenance program analysis")),
+    ("fleet", new SearchListing("Fleet Management - City of Charlotte",
+        "https://www.charlottenc.gov/City-Government/Departments/General-Services/Fleet-Management",
+        "The Louise Avenue Shop services mostly heavy vehicles and construction equipment")),
+    ("fleet", new SearchListing("Citywide Fleet Vehicle Washing, Detailing, and Decontamination",
+        "https://aggregator.example.org/contract-opportunity/citywide-fleet-vehicle-washing",
+        "Citywide Fleet Vehicle Washing and Detailing (269-2026-007) from Charlotte due 9/24/25.")),
+    ("fleet", new SearchListing("Now Hiring: 50 Truck Washing Jobs in Charlotte, NC",
+        "https://www.indeed.com/q-truck-washing-l-charlotte,-nc-jobs.html",
+        "Browse 66 truck washing jobs in Charlotte NC. Full time."))
+}, ResearchProfileCatalog.Preset("fleet"));
+
+foreach (var pilot in pilotTriage)
+    Console.WriteLine($"PILOT TRIAGE: {pilot.Host} | {pilot.Suggestion.Step} | {pilot.Suggestion.Explanation}");
+SuggestedNextStep PilotStep(string host) => pilotTriage.Single(x =>
+    x.Host.Equals(host, StringComparison.OrdinalIgnoreCase)).Suggestion.Step;
+Check(pilotTriage.Count == 8 &&
+      PilotStep("evp.nc.gov") == SuggestedNextStep.FurtherResearch &&
+      pilotTriage.Where(x => x.Host == "www.charlottenc.gov")
+          .All(x => x.Suggestion.Step == SuggestedNextStep.FurtherResearch) &&
+      PilotStep("fleetwashsupply.example.org") == SuggestedNextStep.Deprioritize &&
+      PilotStep("cleanfleet.example.org") == SuggestedNextStep.Deprioritize &&
+      PilotStep("vectorfleet.example.org") == SuggestedNextStep.ApplicationReview &&
+      PilotStep("aggregator.example.org") == SuggestedNextStep.Deprioritize &&
+      PilotStep("www.indeed.com") == SuggestedNextStep.Deprioritize &&
+      pilotTriage.Count(x => x.Host == "www.charlottenc.gov" &&
+          x.Suggestion.Step == SuggestedNextStep.FurtherResearch) == 2,
+    "live fleet-search examples distinguish vendor setup, general procurement, suppliers, competitors, expired bids and jobs");
+
+var futureDeadline = OpportunityTriage.Recommend(
+    "Fleet washing procurement opportunities due 12/24/27", ResearchProfileCatalog.Preset("fleet"),
+    buyerProcess: true, seller: false, guide: false, employmentListing: false,
+    todayUtc: new DateOnly(2026, 11, 11));
+var pastDeadline = OpportunityTriage.Recommend(
+    "Fleet washing procurement opportunities deadline: 9/24/25", ResearchProfileCatalog.Preset("fleet"),
+    buyerProcess: true, seller: false, guide: false, employmentListing: false,
+    todayUtc: new DateOnly(2026, 11, 11));
+Check(futureDeadline.Step == SuggestedNextStep.ApplicationReview &&
+      pastDeadline.Step == SuggestedNextStep.Deprioritize,
+    "explicit passed deadlines are historical while future bidding dates remain reviewable");
+
+var employmentTriage = OpportunityRanker.Rank(new[]
+{
+    ("jobs", new SearchListing("Junior developer job openings",
+        "https://careers.example.org/jobs", "Apply now to the junior developer opening")),
+    ("vendor", new SearchListing("Supplier registration",
+        "https://purchasing.example.org/vendors", "Register as a vendor for procurement opportunities"))
+}, ResearchProfileCatalog.Preset("junior-dev"));
+Check(employmentTriage.Single(x => x.Host == "careers.example.org")
+          .Suggestion.Step == SuggestedNextStep.ApplicationReview &&
+      employmentTriage.Single(x => x.Host == "purchasing.example.org")
+          .Suggestion.Step == SuggestedNextStep.Deprioritize &&
+      OpportunityTriage.IsEmploymentProfile(ResearchProfileCatalog.Preset("junior-dev")) &&
+      !OpportunityTriage.IsEmploymentProfile(ResearchProfileCatalog.Preset("fleet")),
+    "employment profiles recommend manual job application review, not unrelated supplier registrations");
+Check(triageFixtures.All(x => x.Suggestion.Label.Length > 0 &&
+                            x.Suggestion.Explanation.Length > 30) &&
+      triageFixtures.Any(x => x.Suggestion.Route is null) &&
+      triageFixtures.All(x => x.SourceTier.Contains("unverified", StringComparison.OrdinalIgnoreCase)),
+    "all deterministic decisions are explainable, and low-priority records are not silently imported");
+
 var sampleProcessLinks = ProcessLinkAnalyzer.Extract(
     new Uri("https://city.example.org/vendor-process"),
     "<html><body><a href='/vendors'>Vendor registration</a>" +
@@ -331,7 +445,7 @@ try
         var fakeSearch = new FakeWebSearchProvider();
         var discovery = new OpportunityDiscoveryService(fakeSearch,
             new LocalSearchUsageBudget(Path.Combine(discoveryPath, "budget"), 5),
-            profileStoreForDiscovery, new FixedWorkspaceAccess(1), factory, flow);
+            profileStoreForDiscovery, new FixedWorkspaceAccess(1), factory);
         var prior = (await flow.ListProspectsAsync()).Count;
         var discovered = await discovery.DiscoverAsync();
         Check(discovered.Candidates.Count == 1 && discovered.Queries.Count == 2 &&
@@ -355,6 +469,52 @@ try
               newProspect.Status == ProspectStatus.ResearchNeeded &&
               newProspect.Attempts == 0,
             "owner-reviewed indexed URL imports with no verified process or outreach approval");
+
+        var applicationCandidate = discovered.Candidates[0] with
+        {
+            Title = "Application review candidate",
+            Url = "https://city.example.org/apply",
+            Summary = "Search result mentions a possible registration process"
+        };
+        var appRoute = await discovery.RouteReviewedAsync(1, applicationCandidate,
+            DiscoveryRoute.ApplicationReview);
+        var appDetails = await flow.GetDetailsAsync(appRoute.ProspectId);
+        Check(appRoute.Added && appDetails is not null &&
+              appDetails.Prospect.Status == ProspectStatus.ApplicationTask &&
+              appDetails.Prospect.ResearchOutcome == ResearchOutcome.NotReviewed &&
+              appDetails.Prospect.ProcessUrl == "" &&
+              appDetails.Prospect.ContactEmail == "" &&
+              appDetails.Prospect.Attempts == 0 &&
+              appDetails.Evidence.Count == 1 &&
+              !appDetails.Evidence[0].IsOfficial &&
+              appDetails.Evidence[0].SourceUrl == applicationCandidate.Url &&
+              appDetails.Activity.Any(a => a.Kind == "Discovery triage"),
+            "application review route persists unverified source and audit, but never marks a confirmed process");
+        var duplicateRoute = await discovery.RouteReviewedAsync(1,
+            applicationCandidate with { Title = "A different indexed title" },
+            DiscoveryRoute.InquiryReview);
+        Check(!duplicateRoute.Added && duplicateRoute.ProspectId == appRoute.ProspectId &&
+              (await flow.GetDetailsAsync(appRoute.ProspectId))!.Prospect.Status ==
+                  ProspectStatus.ApplicationTask,
+            "repeat indexed URL does not silently change an existing prospect's review queue");
+        var inquiryRoute = await discovery.RouteReviewedAsync(1,
+            applicationCandidate with { Title = "Inquiry route candidate", Url = "https://city.example.org/inquiry" },
+            DiscoveryRoute.InquiryReview);
+        var inquiryDetails = await flow.GetDetailsAsync(inquiryRoute.ProspectId);
+        Check(inquiryRoute.Added && inquiryDetails is not null &&
+              inquiryDetails.Prospect.Status == ProspectStatus.NeedsAction &&
+              inquiryDetails.Prospect.ResearchOutcome == ResearchOutcome.NotReviewed &&
+              inquiryDetails.Prospect.DraftBody == "" &&
+              inquiryDetails.Prospect.NextAction.Contains("recipient", StringComparison.OrdinalIgnoreCase),
+            "inquiry route asks for recipient and process verification without enabling drafting");
+        await MustReject(() => discovery.RouteReviewedAsync(777, applicationCandidate,
+            DiscoveryRoute.FurtherResearch), "review routing rejects a stale workspace");
+        await MustReject(() => discovery.RouteReviewedAsync(1,
+            applicationCandidate with { Url = "http://127.0.0.1/admin" },
+            DiscoveryRoute.FurtherResearch), "review routing revalidates unsafe indexed destinations");
+        await MustReject(() => discovery.RouteReviewedAsync(1, applicationCandidate,
+            (DiscoveryRoute)999), "review routing rejects unknown queue choices");
+
     }
     finally { if (Directory.Exists(discoveryPath)) Directory.Delete(discoveryPath, recursive: true); }
     var researchFlow = new OutreachService(factory, new DryRunEmail(), new FixedWorkspaceAccess(1), new FakeResearcher());
