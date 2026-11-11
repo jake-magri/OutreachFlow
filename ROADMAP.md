@@ -18,6 +18,12 @@ Build a **configurable B2B opportunity-to-conversation pipeline**: find likely b
 | 5. Hosted multi-tenant beta | **Not started** | Migration/backup/restore, auth/role recovery, rate limits, privacy and provider compliance, secure secrets, incident monitoring, threat-modelled crawler, isolated tenants, tested deployment/rollback | #16, #17, #19, #20, #22 |
 | 6. General SaaS | Out of current build scope | Multiple supported customer verticals, onboarding, billing, support, reliability metrics and successful private beta; external provider approvals complete | Depends on Stage 5 product/market validation |
 
+## Persistence recovery progress (issue #16)
+
+The first recovery slice introduces an **operator-only** `OutreachFlow.RecoveryCli` that makes consistent SQLite snapshots, includes local profile/usage/mailbox files, verifies SHA-256 digests and database integrity, and restores only into a new directory. The operator must stop the app to obtain a coherent *multi-file* snapshot and must encrypt the backup. See [RECOVERY-PLAYBOOK.md](RECOVERY-PLAYBOOK.md).
+
+**This does not close #16:** The next persistence PR must use a disposable copy of a populated local database to establish non-destructive EF Core migrations for both contexts; validate constraints, actual before/after records, and rollback. Only then introduce provider message/thread IDs for issue #13 and an approval-gated outbox for issue #14. No database schema change or live sending is included in the recovery slice.
+
 ## Recommended build sequence (next PRs)
 
 1. **Merge audit hygiene PR #12 after review**: stop startup demo seeding, close lifecycle loopholes, correct README/roadmap and add tests. Verify a fresh local password-owner setup and existing database.

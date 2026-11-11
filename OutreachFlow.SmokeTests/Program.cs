@@ -6,6 +6,8 @@ using OutreachFlow.Data;
 using OutreachFlow.Models;
 using OutreachFlow.Services;
 using OutreachFlow.Services.Mailbox;
+using OutreachFlow.Services.Persistence;
+using Microsoft.Data.Sqlite;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -28,6 +30,87 @@ static async Task MustReject(Func<Task> action, string scenario)
         return;
     }
     throw new Exception($"FAILED: {scenario}");
+}
+
+// Local recovery: immutable, checked SQLite snapshots (not raw WAL/SHM copies),
+// auxiliary state backup and restore into a new directory only.
+var recoveryTestRoot = Path.Combine(Path.GetTempPath(),
+    "outreachflow-recovery-" + Guid.NewGuid().ToString("N"));
+try
+{
+    var dbDir = Path.Combine(recoveryTestRoot, "db");
+    var appDir = Path.Combine(recoveryTestRoot, "app");
+    var bundleDir = Path.Combine(recoveryTestRoot, "backup");
+    var restoreDir = Path.Combine(recoveryTestRoot, "restored");
+    Directory.CreateDirectory(dbDir);
+    Directory.CreateDirectory(appDir);
+    foreach (var name in new[] { "outreachflow.db", "outreachflow.auth.db" })
+    {
+        using var sqlite = new SqliteConnection(new SqliteConnectionStringBuilder
+        {
+            DataSource = Path.Combine(dbDir, name),
+            Pooling = false
+        }.ToString());
+        sqlite.Open();
+        using var cmd = sqlite.CreateCommand();
+        cmd.CommandText = "CREATE TABLE RecoverySentinel (value TEXT NOT NULL); " +
+            "INSERT INTO RecoverySentinel VALUES ('preserved');";
+        cmd.ExecuteNonQuery();
+    }
+    Directory.CreateDirectory(Path.Combine(appDir, "research-profiles"));
+    Directory.CreateDirectory(Path.Combine(appDir, "mailbox-keys"));
+    Directory.CreateDirectory(Path.Combine(appDir, "mailbox-connections"));
+    Directory.CreateDirectory(Path.Combine(appDir, "search-usage"));
+    await File.WriteAllTextAsync(Path.Combine(appDir, "research-profiles", "workspace-7.json"),
+        """{"Name":"Preserved business context"}""");
+    await File.WriteAllTextAsync(Path.Combine(appDir, "mailbox-keys", "test-key.xml"),
+        "offline-fixture-no-real-token");
+    await File.WriteAllTextAsync(Path.Combine(appDir, "mailbox-connections", "workspace-7.protected"),
+        "offline-encrypted-token-fixture");
+    await File.WriteAllTextAsync(Path.Combine(appDir, "search-usage", "search-requests.json"),
+        """{"Month":"2026-11","Used":7}""");
+
+    var bundle = await LocalRecoveryBundle.CreateAsync(dbDir, appDir, bundleDir);
+    var verified = await LocalRecoveryBundle.VerifyAsync(bundleDir);
+    Check(verified.Files.Count == 6 &&
+          bundle.Files.Count == verified.Files.Count &&
+          verified.Files.All(x => x.Sha256.Length == 64) &&
+          !File.Exists(Path.Combine(bundleDir, "outreachflow.db-wal")),
+        "recovery bundles contain two consistent SQLite snapshots and 4 checked auxiliary files");
+
+    await MustReject(() => LocalRecoveryBundle.CreateAsync(dbDir, appDir, bundleDir),
+        "recovery backup never overwrites a prior bundle");
+    var restored = await LocalRecoveryBundle.RestoreAsync(bundleDir, restoreDir);
+    Check(restored.Files.Count == verified.Files.Count &&
+          File.ReadAllText(Path.Combine(restoreDir, "research-profiles", "workspace-7.json"))
+            .Contains("Preserved business context", StringComparison.Ordinal) &&
+          File.ReadAllText(Path.Combine(restoreDir, "mailbox-connections", "workspace-7.protected"))
+            == "offline-encrypted-token-fixture",
+        "recovery restores manifest-verified auxiliary state into an empty directory");
+    foreach (var name in new[] { "outreachflow.db", "outreachflow.auth.db" })
+    {
+        using var sqlite = new SqliteConnection(new SqliteConnectionStringBuilder
+        {
+            DataSource = Path.Combine(restoreDir, name),
+            Mode = SqliteOpenMode.ReadOnly, Pooling = false
+        }.ToString());
+        sqlite.Open();
+        using var cmd = sqlite.CreateCommand();
+        cmd.CommandText = "SELECT value FROM RecoverySentinel LIMIT 1";
+        Check(cmd.ExecuteScalar() as string == "preserved",
+            "recovery restore preserves " + name + " database rows");
+    }
+    await MustReject(() => LocalRecoveryBundle.RestoreAsync(bundleDir, restoreDir),
+        "recovery restore refuses an existing destination");
+    await File.WriteAllTextAsync(Path.Combine(bundleDir, "research-profiles", "workspace-7.json"),
+        "tampered");
+    await MustReject(() => LocalRecoveryBundle.VerifyAsync(bundleDir),
+        "recovery detects modified auxiliary data before restore");
+}
+finally
+{
+    try { Directory.Delete(recoveryTestRoot, recursive: true); }
+    catch { /* A temporary SQLite file may remain on Windows. */ }
 }
 
 // Google-first signup requires a positive verified-email claim and never guesses.
