@@ -355,6 +355,52 @@ try
               newProspect.Status == ProspectStatus.ResearchNeeded &&
               newProspect.Attempts == 0,
             "owner-reviewed indexed URL imports with no verified process or outreach approval");
+
+        var applicationCandidate = discovered.Candidates[0] with
+        {
+            Title = "Application review candidate",
+            Url = "https://city.example.org/apply",
+            Summary = "Search result mentions a possible registration process"
+        };
+        var appRoute = await discovery.RouteReviewedAsync(1, applicationCandidate,
+            DiscoveryRoute.ApplicationReview);
+        var appDetails = await flow.GetDetailsAsync(appRoute.ProspectId);
+        Check(appRoute.Added && appDetails is not null &&
+              appDetails.Prospect.Status == ProspectStatus.ApplicationTask &&
+              appDetails.Prospect.ResearchOutcome == ResearchOutcome.NotReviewed &&
+              appDetails.Prospect.ProcessUrl == "" &&
+              appDetails.Prospect.ContactEmail == "" &&
+              appDetails.Prospect.Attempts == 0 &&
+              appDetails.Evidence.Count == 1 &&
+              !appDetails.Evidence[0].IsOfficial &&
+              appDetails.Evidence[0].SourceUrl == applicationCandidate.Url &&
+              appDetails.Activity.Any(a => a.Kind == "Discovery triage"),
+            "application review route persists unverified source and audit, but never marks a confirmed process");
+        var duplicateRoute = await discovery.RouteReviewedAsync(1,
+            applicationCandidate with { Title = "A different indexed title" },
+            DiscoveryRoute.InquiryReview);
+        Check(!duplicateRoute.Added && duplicateRoute.ProspectId == appRoute.ProspectId &&
+              (await flow.GetDetailsAsync(appRoute.ProspectId))!.Prospect.Status ==
+                  ProspectStatus.ApplicationTask,
+            "repeat indexed URL does not silently change an existing prospect's review queue");
+        var inquiryRoute = await discovery.RouteReviewedAsync(1,
+            applicationCandidate with { Title = "Inquiry route candidate", Url = "https://city.example.org/inquiry" },
+            DiscoveryRoute.InquiryReview);
+        var inquiryDetails = await flow.GetDetailsAsync(inquiryRoute.ProspectId);
+        Check(inquiryRoute.Added && inquiryDetails is not null &&
+              inquiryDetails.Prospect.Status == ProspectStatus.NeedsAction &&
+              inquiryDetails.Prospect.ResearchOutcome == ResearchOutcome.NotReviewed &&
+              inquiryDetails.Prospect.DraftBody == "" &&
+              inquiryDetails.Prospect.NextAction.Contains("recipient", StringComparison.OrdinalIgnoreCase),
+            "inquiry route asks for recipient and process verification without enabling drafting");
+        await MustReject(() => discovery.RouteReviewedAsync(777, applicationCandidate,
+            DiscoveryRoute.FurtherResearch), "review routing rejects a stale workspace");
+        await MustReject(() => discovery.RouteReviewedAsync(1,
+            applicationCandidate with { Url = "http://127.0.0.1/admin" },
+            DiscoveryRoute.FurtherResearch), "review routing revalidates unsafe indexed destinations");
+        await MustReject(() => discovery.RouteReviewedAsync(1, applicationCandidate,
+            (DiscoveryRoute)999), "review routing rejects unknown queue choices");
+
     }
     finally { if (Directory.Exists(discoveryPath)) Directory.Delete(discoveryPath, recursive: true); }
     var researchFlow = new OutreachService(factory, new DryRunEmail(), new FixedWorkspaceAccess(1), new FakeResearcher());
