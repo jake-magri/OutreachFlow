@@ -1,8 +1,18 @@
 using Microsoft.EntityFrameworkCore;
 using OutreachFlow.Data;
+using OutreachFlow.Models;
 using OutreachFlow.Services.Research;
 
 namespace OutreachFlow.Services.Discovery;
+
+public enum DiscoveryRoute
+{
+    FurtherResearch,
+    ApplicationReview,
+    InquiryReview
+}
+
+public sealed record DiscoveryRouteResult(int ProspectId, bool Added);
 
 public sealed record OpportunityDiscoveryBatch(
     int WorkspaceId, string ProviderName, DateTime RetrievedUtc,
@@ -16,7 +26,7 @@ public sealed record OpportunityDiscoveryBatch(
 public sealed class OpportunityDiscoveryService(
     IWebSearchProvider provider, ISearchUsageBudget budget,
     IResearchProfileStore profiles, IWorkspaceAccess access,
-    IDbContextFactory<OutreachDbContext> factory, OutreachService outreach)
+    IDbContextFactory<OutreachDbContext> factory)
 {
     public bool IsSearchConfigured => provider.IsConfigured;
     public string ProviderName => provider.Name;
@@ -58,27 +68,103 @@ public sealed class OpportunityDiscoveryService(
             queries, OpportunityRanker.Rank(results, profile), await budget.GetAsync(ct), warnings);
     }
 
+    // Retained for older callers: the default route always means further research.
     public async Task<(int Added, int Skipped)> ImportReviewedAsync(
         int workspaceIdAtSearch, OpportunityCandidate selected, CancellationToken ct = default)
     {
-        var currentWorkspace = await access.ActiveWorkspaceIdAsync();
-        if (workspaceIdAtSearch != currentWorkspace)
-            throw new InvalidOperationException("Workspace changed since discovery. Search again before importing.");
+        var result = await RouteReviewedAsync(workspaceIdAtSearch, selected,
+            DiscoveryRoute.FurtherResearch, ct);
+        return result.Added ? (1, 0) : (0, 1);
+    }
 
-        var uri = ResearchUrlPolicy.ParseWebsite(selected.Url);
-        await using (var db = await factory.CreateDbContextAsync(ct))
-        {
-            if (await db.Prospects.AsNoTracking().AnyAsync(
-                x => x.WorkspaceId == currentWorkspace && x.Website == uri.AbsoluteUri, ct))
-                return (0, 1); // Same public URL previously imported under another title.
-        }
-        // Indexed metadata is not official evidence, and cannot authorize outreach.
-        // Strip the pipe delimiter used by the existing import format.
-        var name = (selected.Title ?? "").Replace('|', ' ').Replace('\n', ' ').Replace('\r', ' ').Trim();
+    /// <summary>
+    /// Explicit operator triage. Indexed results never establish official process
+    /// status, recipient approval, or permission to send. The selected action,
+    /// source evidence and history are committed together in the current workspace.
+    /// </summary>
+    public async Task<DiscoveryRouteResult> RouteReviewedAsync(
+        int workspaceIdAtSearch, OpportunityCandidate selected, DiscoveryRoute route,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(selected);
+        if (!Enum.IsDefined(route))
+            throw new InvalidOperationException("Unknown discovery route.");
+
+        var workspaceId = await access.ActiveWorkspaceIdAsync();
+        if (workspaceId != workspaceIdAtSearch)
+            throw new InvalidOperationException("Workspace changed since discovery. Search again before routing.");
+
+        // Recheck the source URL on the server; remove fragments to avoid duplicate
+        // prospects for different anchors on the same indexed page.
+        var url = new UriBuilder(ResearchUrlPolicy.ParseWebsite(selected.Url)) { Fragment = "" }
+            .Uri.AbsoluteUri;
+        var name = (selected.Title ?? "").Replace('|', ' ').Replace('\n', ' ')
+            .Replace('\r', ' ').Trim();
         if (name.Length > 140) name = name[..140];
-        if (name.Length == 0) name = uri.Host;
-        var line = name + " | Indexed search result | " + uri.AbsoluteUri + " | ";
-        var (added, skipped) = await outreach.ImportAsync(line);
-        return (added, skipped);
+        if (name.Length == 0) name = new Uri(url).Host;
+        const string site = "Indexed search result";
+
+        await using var db = await factory.CreateDbContextAsync(ct);
+        var existing = await db.Prospects.AsNoTracking().FirstOrDefaultAsync(
+            p => p.WorkspaceId == workspaceId &&
+                 (p.Website == url || (p.CompanyName == name && p.SiteName == site)), ct);
+        // Never change existing ownership, suppression, or a previously selected route
+        // through a repeat discovery click.
+        if (existing is not null)
+            return new DiscoveryRouteResult(existing.Id, false);
+
+        var nextAction = route switch
+        {
+            DiscoveryRoute.ApplicationReview =>
+                "Verify the official application or registration process; apply manually if relevant",
+            DiscoveryRoute.InquiryReview =>
+                "Verify the process and recipient; decide whether to approve an inquiry",
+            _ => "Research the official source and determine which process applies"
+        };
+        var status = route switch
+        {
+            DiscoveryRoute.ApplicationReview => ProspectStatus.ApplicationTask,
+            DiscoveryRoute.InquiryReview => ProspectStatus.NeedsAction,
+            _ => ProspectStatus.ResearchNeeded
+        };
+        var now = DateTime.UtcNow;
+        var prospect = new Prospect
+        {
+            WorkspaceId = workspaceId,
+            CompanyName = name,
+            SiteName = site,
+            Website = url,
+            ResearchOutcome = ResearchOutcome.NotReviewed,
+            Status = status,
+            NextAction = nextAction,
+            UpdatedUtc = now,
+            CreatedUtc = now
+        };
+        db.Prospects.Add(prospect);
+        // Never store an indexed snippet as verified instructions, and do not
+        // copy the search result URL into the confirmed ProcessUrl field.
+        var observation = $"Indexed search snippet only (unverified). " +
+            $"Intent hint: {selected.IntentCategory}. Query: {selected.Query}. " +
+            $"Summary: {selected.Summary}";
+        db.ResearchEvidence.Add(new ResearchEvidence
+        {
+            ProspectId = prospect.Id,
+            SourceTitle = ("Search result: " + name)[..Math.Min(200, 15 + name.Length)],
+            SourceUrl = url,
+            ExcerptOrObservation = observation[..Math.Min(1200, observation.Length)],
+            IsOfficial = false,
+            CheckedUtc = now
+        });
+        db.Activities.Add(new ActivityEntry
+        {
+            ProspectId = prospect.Id,
+            Kind = "Discovery triage",
+            Detail = $"Owner selected {route} from an unverified indexed result. " +
+                "No process, recipient, or sending approval was granted.",
+            OccurredUtc = now
+        });
+        // EF Core resolves the new temporary prospect key on SaveChanges.
+        await db.SaveChangesAsync(ct);
+        return new DiscoveryRouteResult(prospect.Id, true);
     }
 }
