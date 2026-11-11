@@ -13,7 +13,7 @@ else
     <div class="panel-grid">
         <section class="panel spaced">
             <div class="panel-heading"><h2>1 · Official-process research</h2><small>Required first</small></div>
-            <p>Check the company's official vendor portal or written supplier instructions before deciding whether to inquire. OutreachFlow can inspect a small number of public HTML pages on the submitted company website. It cannot verify whether a linked portal accepts fleet-washing suppliers. Review all results before saving an outcome.</p>
+            <p>Check the company's official vendor portal or written supplier instructions before deciding whether to inquire. OutreachFlow can inspect a small number of public HTML pages on the submitted company website. It cannot verify whether a linked portal applies to your workspace, and a successful HTTP response may still return a JavaScript shell or access challenge. Review all results before saving an outcome.</p>
             <div class="scan-box">
                 <p><strong>Company website:</strong> @p.Website</p>
                 <button class="button" @onclick="ScanWebsite" disabled="@scanning">@(scanning ? "Checking public site…" : "Research company website")</button>
@@ -225,7 +225,7 @@ else
         try
         {
             var scan = await Flow.ResearchCompanyAsync(Id);
-            scanSummary = $"Checked {scan.PagesChecked.Count} public HTML page(s); found {scan.Candidates.Count} possible reference(s) and {scan.Contacts.Count} published email candidate(s). {scan.SuggestedReview} {scan.Limitations}";
+            scanSummary = $"Fetched {scan.PagesChecked.Count} HTML page(s); {scan.PageDiagnostics.Count(x => x.IsInconclusive)} returned insufficient or suspicious content. Found {scan.Candidates.Count} possible reference(s) and {scan.Contacts.Count} published email candidate(s). {scan.SuggestedReview} {scan.Limitations}";
             alert = "Website scan saved. Review each reference before confirming a research outcome.";
         }
         catch (Exception ex) { alert = "Research could not finish: " + ex.Message; }
