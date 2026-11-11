@@ -19,3 +19,7 @@ search-usage/
 # OAuth refresh tokens and machine/user-protected DataProtection key ring.
 mailbox-connections/
 mailbox-keys/
+
+# Playwright standalone browser test captures (never commit traces or screenshots).
+**/playwright-report/
+**/test-results/
