@@ -7,7 +7,7 @@ Turn an on-demand search batch into a grouped and explainable next-step review l
 - **Review application process:** indexed evidence plausibly describes buyer-side registration, procurement, or, for an employment-oriented workspace, an application for work.
 - **Review inquiry eligibility:** indexed evidence points to a vendor/procurement inquiry contact but does not identify a clear application process.
 - **Research further:** evidence is too ambiguous, sparse, or mixed to recommend a specific action.
-- **Deprioritize / possible false match:** likely wholesaler selling goods, informational third-party guide, or job listing irrelevant to a business-services profile. Still visible and manually recoverable.
+- **Deprioritize / possible false match:** likely wholesaler selling goods, competitor offering fleet washing, third-party guide, business-irrelevant job listing, or search snippet explicitly reporting a past due date. Still visible and manually recoverable.
 
 Suggestions are computed deterministically from indexed title, snippet, URL path and workspace research profile. No LLM or extra search provider calls. Mixed signals resolve conservatively. The relevance score remains a keyword heuristic, not a verified confidence level. A suggested route is not a verified process, approved contact, invitation to bid, or evidence of legal permission to send email.
 
@@ -38,3 +38,10 @@ Suggestions are computed deterministically from indexed title, snippet, URL path
 - No live mailbox integration, scheduler, auto-send, LLM, schema migration or production deployment.
 - Single-process local prototype: database-enforced URL canonicalization/uniqueness and concurrent-writer protection are production follow-ups.
 - Additional richer research-driven verification and policy tuning should be evaluated with real pilot observations before approving automatic actions.
+
+## November 11 live fleet pilot feedback
+The first operator search returned eight indexed suggestions. New fixtures reflect the visible title, URL and snippet for the City procurement hub and generic RFP, Vector Fleet's new-vendor-setup form, a fleet washing supplier, a competing washing provider, a municipal fleet department, a third-party listing with a September 24, 2025 deadline, and an Indeed jobs listing.
+
+Expected after refinement: explicit vendor setup -> **application review**; general city pages -> **further research**; supplier/competitor/old solicitation/job board -> **deprioritize**. These are **suggestions only**, not verification of a buyer, current availability, supplier eligibility, or third-party link authenticity. Past deadlines are detected only when a recognizable date is explicitly labeled as a deadline/due date; absence of a date does not establish currency. Search snapshots are truncated and may omit important details, so direct inspection remains necessary.
+
+This is a conservative keyword/heuristic improvement, not a trained classifier. Recheck with the same workspace profile before merging, ideally using real results already in view. Each new search makes up to two operator-funded Tavily requests.
