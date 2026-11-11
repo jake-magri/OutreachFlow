@@ -11,7 +11,7 @@ OutreachFlow is a .NET 10 Blazor Server interactive web app using EF Core, ASP.N
 - **Research:** read-only, up to six same-site public HTML pages, bounded requests and robot rules, SSRF and cross-host defenses, source-linked evidence, public email candidates and potential portal links. Experimental browser rendering is explicitly opt-in and may remain inconclusive.
 - **Prospect workflow:** manually verified research decisions, inquiries and template-based drafts, simulation-only sequences, owner-attested actual external sends, manually entered actual replies, recorded follow-up tasks, contact suppression, audit history and CSV metadata export.
 - **Mailbox:** optional, owner-authorized Gmail `gmail.readonly` connection in Windows Development mode; encrypted local refresh token; user-initiated limited inbox review and manual classification/import. The pending issue #13 branch strengthens matches to one provider-confirmed sent thread and matching reply headers; this is still **not unattended inbox synchronization or authentication of a human sender**. A separate optional `gmail.send` consent upgrade enables explicitly approved initial inquiries; automatic sending remains off.
-- **Tests:** an offline .NET smoke-test executable checks discovery/triage, policy constraints, identity provisioning, data isolation, research decisions, simulated/manual message lifecycles, and token encryption. GitHub Actions restores, builds, runs tests and starts the protected localhost app.
+- **Tests:** the offline .NET smoke suite covers discovery/triage, security constraints, Gmail identity and lifecycle invariants. A separate Playwright Chromium harness now drives real authentication, prospect and workspace UI flows against disposable databases, with screenshot/trace artifacts on failure. GitHub Actions runs both suites on pull requests; see [BROWSER-ACCEPTANCE.md](BROWSER-ACCEPTANCE.md).
 
 ## Current product boundary
 
@@ -32,7 +32,9 @@ OutreachFlow is **research-first, not a bulk email or autonomous sales agent**. 
 | `Services/OutreachService.cs` | Prospect state transitions, drafts, manual/simulated history, exports |
 | `Components/Pages/` | Dashboard, prospects, discovery, settings, mailbox |
 | `OutreachFlow.SmokeTests/` | Offline regression suite |
+| `OutreachFlow.BrowserTests/` | Isolated Playwright browser journeys with temporary SQLite, no external providers |
 | `.github/workflows/build.yml` | CI and localhost startup check |
+| `.github/workflows/browser-tests.yml` | Isolated Chromium acceptance on pull requests |
 
 ## Run locally
 
@@ -78,6 +80,7 @@ The app fails closed outside ASP.NET Core Development and refuses non-loopback r
 - [AUDIT-2026-11-11.md](AUDIT-2026-11-11.md): repository-wide code audit, confirmed findings and prioritized risks.
 - [TEST-CHECKLIST.md](TEST-CHECKLIST.md): manual acceptance checklist.
 - [TRIAGE-PILOT.md](TRIAGE-PILOT.md): pilot classification and manual route-approval tests.
+- [BROWSER-ACCEPTANCE.md](BROWSER-ACCEPTANCE.md): one-command Playwright acceptance, isolation and CI failure artifacts.
 - [MAILBOX-PILOT.md](MAILBOX-PILOT.md): historical Google OAuth and read-only mailbox pilot; [GMAIL-SENDING-PILOT.md](GMAIL-SENDING-PILOT.md) documents the now-accepted one-message sending pilot.
 - [RECOVERY-PLAYBOOK.md](RECOVERY-PLAYBOOK.md): local backup, integrity verification and restore-to-new-directory procedures.
 - [MIGRATION-BASELINE.md](MIGRATION-BASELINE.md): generated EF migrations, schema inspection and optional backed-up adoption.
