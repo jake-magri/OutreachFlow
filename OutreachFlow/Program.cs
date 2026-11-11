@@ -45,8 +45,8 @@ if (GoogleSignInEndpoints.Configured(builder.Configuration))
 {
     auth.AddGoogle(GoogleSignInEndpoints.Provider, options =>
     {
-        options.ClientId = builder.Configuration["GoogleAuth:ClientId"]!;
-        options.ClientSecret = builder.Configuration["GoogleAuth:ClientSecret"]!;
+        options.ClientId = GoogleSignInEndpoints.ClientId(builder.Configuration)!;
+        options.ClientSecret = GoogleSignInEndpoints.ClientSecret(builder.Configuration)!;
         options.SignInScheme = IdentityConstants.ExternalScheme;
         options.CallbackPath = "/signin-google";
         options.Scope.Clear();
