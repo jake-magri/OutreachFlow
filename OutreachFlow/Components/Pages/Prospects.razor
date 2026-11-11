@@ -1,7 +1,42 @@
 @page "/prospects"
 @inject OutreachService Flow
+@using OutreachFlow.Services.Mailbox
+@using Microsoft.AspNetCore.Components.Authorization
+@inject BatchInquiryService Batches
+@inject AuthenticationStateProvider Authentication
 <PageTitle>Prospects · OutreachFlow</PageTitle>
 <section class="page-header"><div><div class="eyebrow">PIPELINE</div><h1>Prospects</h1><p>Import a batch, research official vendor processes, then prepare inquiry drafts.</p></div></section>
+<section class="panel spaced">
+    <div class="panel-heading"><h2>Batch inquiry pipeline</h2><small>Up to three recipients</small></div>
+    <p>Paste <code>Company | Site/branch | https://official-site | Business email</code>. The pipeline adds each new recipient, prepares the workspace inquiry draft and processes one initial attempt. Duplicate companies or recipients are skipped.</p>
+    <label for="batch-input">Prospect rows</label>
+    <textarea id="batch-input" class="textarea" rows="4" @bind="batchInput" placeholder="Fixture Company | South Charlotte | https://example.org | contact@example.org"></textarea>
+    <div class="field"><label for="batch-mode">Processing mode</label>
+        <select id="batch-mode" @bind="batchMode">
+            <option value="Simulated">Simulation — no Gmail or external calls</option>
+            <option value="Gmail">Approved live Gmail — initial inquiry only</option>
+        </select>
+    </div>
+    @if (batchMode == "Gmail")
+    {
+        <p class="help">The application cannot verify an official process or determine whether a contact wants an inquiry from an imported string. Before approving, independently check each official company website, confirm the inquiry route is appropriate, confirm recipients and the saved template. This approval covers only these rows, not later campaigns. Gmail requires an authorized sender and the local send pilot enabled.</p>
+        <label class="checkbox"><input type="checkbox" @bind="batchApproved" /> I verified each company’s official process and recipient and approve sending the saved inquiry template to these specific contacts.</label>
+    }
+    <div class="actions"><button class="button primary" @onclick="RunBatch" disabled="@(batchBusy || (batchMode == "Gmail" && !batchApproved))">@(batchBusy ? "Processing…" : "Run batch pipeline")</button>
+        <small>Simulation is the default. No automatic follow-ups or retries.</small>
+    </div>
+    @if (!string.IsNullOrEmpty(batchNotice)) { <p class="notice" role="status">@batchNotice</p> }
+    @if (batchResult is not null)
+    {
+        <p><strong>Batch outcome:</strong> @batchResult.Sent Gmail accepted · @batchResult.Simulated simulated · @batchResult.Held held · @batchResult.Skipped skipped.</p>
+        @foreach (var outcome in batchResult.Outcomes)
+        {
+            <p class="help">@outcome.Company — @outcome.Result
+                @if (outcome.ProspectId.HasValue) { <a href="@($"/prospects/{outcome.ProspectId}")">View prospect</a> }
+            </p>
+        }
+    }
+</section>
 <section class="panel spaced">
     <div class="panel-heading"><h2>Import prospects</h2><small>One prospect per line</small></div>
     <p>Format: <code>Company | Site/branch | Website | Business email</code>. Existing company/site pairs are skipped.</p>
@@ -23,10 +58,35 @@
 </section>
 @code {
     private List<Prospect>? prospects;
+    private string batchInput = "";
+    private string batchMode = "Simulated";
+    private bool batchApproved;
+    private bool batchBusy;
+    private string batchNotice = "";
+    private BatchInquiryResult? batchResult;
     private string csv = "";
     private string notice = "";
     private bool busy;
     protected override async Task OnInitializedAsync() => prospects = await Flow.ListProspectsAsync();
+    private async Task RunBatch()
+    {
+        if (batchBusy) return;
+        batchBusy = true;
+        batchNotice = "";
+        batchResult = null;
+        try
+        {
+            var mode = Enum.Parse<BatchInquiryMode>(batchMode);
+            var state = await Authentication.GetAuthenticationStateAsync();
+            batchResult = await Batches.RunAsync(state.User, batchInput, mode, batchApproved);
+            prospects = await Flow.ListProspectsAsync();
+            batchNotice = "Batch recorded. Review any held or skipped recipients. There are no automatic retries.";
+            batchApproved = false;
+        }
+        catch (Exception ex) { batchNotice = ex is UnauthorizedAccessException ? "Only a workspace owner may run a batch." : ex.Message; }
+        finally { batchBusy = false; }
+    }
+
     private async Task Import()
     {
         busy = true;
