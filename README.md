@@ -1,90 +1,68 @@
-# OutreachFlow — consolidated local workflow prototype
+# OutreachFlow
 
-**OutreachFlow** is a .NET 10 / Blazor Server / Entity Framework Core / SQLite app for **research-first, email-only vendor outreach**. It is a local prototype built for a single owner, with configurable business context that can later support other workspaces.
+**Research-first opportunity discovery, qualification, outreach and human handoff.**
 
-> **Do not deploy this build to a publicly accessible server.** It has no user authentication, no real mailbox connection, and on-demand bounded public-website research. It deliberately refuses non-Development startup and rejects non-loopback connections. All outbound and inbound email is simulated by buttons inside the UI; no email is sent. Explicitly clicking Research company website DOES make read-only HTTP(S) requests to public sites.
+OutreachFlow is a .NET 10 Blazor Web App with EF Core and local SQLite databases. The product is intended to reduce the repetitive work between finding a business opportunity and reaching a meaningful outcome—not merely to send bulk cold email.
 
-## Quick start (Visual Studio 2026)
+## Product blueprint
 
-1. **Close Visual Studio first**. Extract this ZIP into **`C:\Dev`** (or another new location). The ZIP itself contains the top-level folder **`OutreachFlow`**, so the solution will be at `C:\Dev\OutreachFlow\OutreachFlow.slnx`. Do not paste or merge its contents into an old `OutreachFlow` directory; earlier files cause the reported CS1061/CS0103 mismatches.
-2. Open **`OutreachFlow.slnx`** from that new folder in Visual Studio 2026. Install the **ASP.NET and web development** workload and **.NET 10 SDK**.
-3. Let Visual Studio restore packages. The web project uses `Microsoft.EntityFrameworkCore.Sqlite` version `10.0.14` and pins SQLitePCLRaw `2.1.14` to avoid the old vulnerable `2.1.11` transitively resolved before. Run `dotnet list OutreachFlow/OutreachFlow.csproj package --include-transitive` if necessary to verify that `SQLitePCLRaw.lib.e_sqlite3` is not `2.1.11`.
-4. Select **OutreachFlow** as startup project and start with F5. Browse the local URL shown in the output; the supplied launch profile uses `https://localhost:7117`.
-5. Use Dashboard → Prospects to import prospects. Two **fictional** `.example` records are seeded on a new database. No business is contacted.
-6. To exercise the first workflow: choose a prospect → manually record official-process research → generate draft → simulate initial outreach → simulate interested reply. Return to dashboard to see the warm lead.
-7. To exercise the no-response workflow: simulate the configured one or two follow-ups and then press **Simulate no-response handoff**. This is **not** a warm lead. The UI shows the next due-time preview but simulation buttons intentionally bypass the clock.
-8. Try **Manual follow-up & ownership** to log a call, an application submission, a note, a next action, and a date. Manual takeover blocks further simulated follow-ups.
-9. Open **Settings** to change the business name, service area, contact details, templates, timezone, and cadence. Active simulated sequences keep the policy they started with.
-10. From Prospects, **Export CSV** to save your pipeline metadata. Message bodies are not included.
+**One engine, configurable business workspaces.** A workspace provides its own business profile, service keywords, geographic preferences, process requirements, contact rules, email templates and follow-up limits. Initial use cases:
 
-### Run locally from CLI
+- **Magri Exterior Services:** find commercial fleet-service clients, approved vendor/subcontractor programs, bids and partnership contacts; research each company's process before outreach.
+- **Independent software services:** find businesses seeking outsourced .NET / web / automation development, subcontracting, RFPs and IT vendor onboarding. This is **contracting/business development**, not a W-2 job application bot.
 
-```bash
+Future customers can use the same engine with different service niches. A generic visual workflow builder, SaaS billing and automated job application form submissions are **not** current priorities.
+
+### Intended end-to-end workflow
+
+1. **Discover:** import companies manually now; later add terms-compliant web-search providers and keyword/geography filters. Sources may be search APIs, user lists or approved vertical integrations.
+2. **Research:** visit a bounded set of permitted public pages; extract source-backed process signals and published business contact candidates. Evaluate requirements relevant to the workspace.
+3. **Decide:** a *verified* official application/portal means **human application handoff**. Where no applicable process is found in the checked sources and a recipient is approved, use the inquiry workflow. **Unknown and inconclusive are not the same as absent.**
+4. **Outreach:** with an authorized real mailbox and an explicitly approved campaign, send a legitimate business inquiry and at most the configured number of follow-ups, within policy and compliance limits. **Not yet automated or connected.**
+5. **Monitor:** reconcile sent messages and actual replies, stop on opt-out/bounce/negative response/owner takeover; handle ambiguous replies conservatively.
+6. **Handoff:** surface warm leads, application tasks, unanswered conversations and uncertain research for human action. Retain an audit trail and source evidence.
+
+Never assume a person has consented or that a contact address is appropriate simply because it was discovered publicly. No anti-bot circumvention, mass scraping of restricted websites or unattended form submission.
+
+## Current implemented features (main + this research branch)
+
+- Identity-backed first-owner sign-in, multiple local workspaces, and membership-scoped prospects and settings.
+- Manual import, local four-queue dashboard, read-only bounded site scan, evidence review, configurable inquiry templates, simulated outbound/reply sequences, cadence previews, manual tasks, CSV export, and suppression checks.
+- **This research branch:** visits relevant contact pages, extracts public HTML/mailto email candidates with page provenance, and offers **Approve as recipient** after manual verification. Possible vendor links remain unverified until the owner records a sourced process decision. No database schema change.
+- **Separate draft PR #2:** human-confirmed real sends and manually recorded replies; that work is **not yet in main** and is not bundled into this branch.
+
+**Not yet implemented:** automatic keyword web-search sourcing, reliable vendor-process classification without human review, PDF / third-party portal research, live mailbox integration, automatic sending or reply monitoring, durable scheduled jobs, production-grade migrations/backups, and public multi-tenant hosting.
+
+## Run locally
+
+Prerequisites: .NET 10 SDK, Git, and Windows/Visual Studio or another supported .NET environment.
+
+```powershell
+git switch main
+git pull --ff-only origin main
 dotnet restore OutreachFlow.slnx
-dotnet run --project OutreachFlow/OutreachFlow.csproj --launch-profile OutreachFlow
+dotnet build OutreachFlow.slnx
+dotnet run --project OutreachFlow.SmokeTests
+dotnet run --project OutreachFlow
 ```
 
-### Run offline smoke tests (no mail or API keys)
+Open **https://localhost:7117** (the project also listens on HTTP port 5117, which redirects to HTTPS). For a fresh local installation, use **/account/setup** to register the first owner; subsequent access is through **/account/login**. The setup route is intentionally unavailable after an account exists. If the HTTPS development certificate is untrusted: `dotnet dev-certs https --trust`.
 
-```bash
-dotnet run --project OutreachFlow.SmokeTests/OutreachFlow.SmokeTests.csproj
-```
+To test this research change after CI passes, use `git fetch origin` and `git switch --track origin/feature/research-triage-contact-discovery` (or `git switch feature/research-triage-contact-discovery` if already present).
 
-The smoke test uses a temporary SQLite database and a fake research provider (no HTTP requests). It exercises website research review-gating, deduplication, URL safety, portal-first routing, draft suppression, simulated sending, snapshotted cadence, the no-response queue, late replies, opt-outs, manual takeover, DST-aware weekday scheduling, and CSV formula safety.
+**Do not deploy this prototype publicly.** It fails closed outside Development and blocks non-loopback requests. The app performs only on-demand read-only website checks when explicitly requested. The existing sending controls are simulations. Do not enter real mail provider secrets until a reviewed connection is implemented.
 
-**Verification status:** Files and the ZIP have been statically validated, but this environment lacks the .NET SDK and NuGet access. **The solution has not been compiled or run here**. Run both commands above on your Windows development machine and resolve any build/runtime issues before relying on this code.
+## Local storage
 
-## Consolidation notes
+`outreachflow.db` stores workspaces, prospects, research evidence, simulated messages and activities. `outreachflow.auth.db` separately holds ASP.NET Core Identity users and workspace memberships. Both are relative SQLite paths created where the app runs. Both databases currently use EF Core `EnsureCreated()`, not production migrations.
 
-The supplied archive included an empty `OutreachFlow/OutreachFlow` folder and a second `OutreachFlow/OutreachFlow (2)` folder containing the real app. The second folder has been normalized to the **single** `OutreachFlow/OutreachFlow` project path required by `OutreachFlow.slnx`.
+Stop the process and **back up both files plus any WAL/SHM companions** before changing branches or upgrading. Git excludes local `*.db` data. There is no hosted database, running background worker, or AWS spend.
 
-Removed from the distributable: Visual Studio `.vs` caches; build-generated `bin`/`obj` files and `*.user`; obsolete Blazor template pages (`Counter`, `Weather`, unused `NavMenu`, sample CSS/Bootstrap bundle, etc.); duplicate Dockerfile and duplicate setup notes. A single `Dockerfile.future` remains for future reference only, **not for deployment**.
+## Development and safety
 
-The old `outreachflow.db` / `-wal` / `-shm` trio was **not** carried into this clean source archive. Examination of the uploaded database found only two demo prospects, no messages, no activities, and no research evidence; its schema also predates this version. A fresh demo database will be seeded on first run. If you have separate real data in another local database, preserve that separately and do not overwrite it.
+- Run offline tests with `dotnet run --project OutreachFlow.SmokeTests`; GitHub Actions builds and smoke-tests pull requests.
+- Use a dedicated PR branch, have CI pass, then exercise the workflow in a browser before merging.
+- Source-backed research is provisional and can contain mistakes; robots restrictions, private-network blocks, read limits and same-site restrictions are intentional.
+- Production work still requires schema migrations, backup/restore tests, true tenant-level authorization review, secrets handling, email consent/suppression controls, idempotent jobs, monitoring, and recovery.
 
-**The original uploaded ZIP is unchanged.** Do not merge this archive into the old duplicated folder: use a fresh extraction location. No live emails are sent.
-
-## Corrections retained
-
-- Razor `type="date"` now uses explicit `value`/`onchange` rather than an incompatible `@bind` inference.
-- Dashboard no longer dereferences a possibly null next-due timestamp.
-- EF Core SQLite updated to 10.0.14 with explicit SQLitePCLRaw bundle 2.1.14 (the original 2.1.11 library is listed as vulnerable).
-- **All source files and tests are included together**. Missing `BusinessCalendar`, `PlannedFollowups`, `RecordManualActivityAsync`, and `ExportCsvAsync` in a local build indicate old source files are still being used.
-
-## Iteration 3: on-demand website research
-
-- New **Research company website** button on prospect detail screens. Crawls up to six public same-site HTML pages on click, subject to robots.txt and safeguards.
-- Saves **source links, excerpts and checked-page records** in the existing ResearchEvidence table, with all automated findings marked **unverified**.
-- **Copy into review form** action assists explicit owner verification. Only reviewed outcomes can move a prospect to DraftReady or ApplicationTask.
-- No EF schema changes or new NuGet dependencies; existing demo/pilot databases can be retained. Refer to `RESEARCH-SETUP.md` for patch and test instructions.
-
-## Iteration 2 highlights
-
-- **Four queues**: warm leads, action needed, manual outreach after nonresponse, held/closed. "No reply" is never counted as interested.
-- **Research first**: portal results become manual application tasks; inquiry-eligible results produce draft emails only after a documented research outcome.
-- **Manual handoff**: activity type, audit note, next action/date, and closure are now persisted.
-- **Scheduling preview**: the next dry-run step is stored as a UTC instant, calculated using weekday delays and the configured timezone (including DST). This is not a BackgroundService and does not send anything.
-- **Sequence snapshots**: follow-up delay and count are captured at first simulation; edits to Workspace settings affect *new* sequences only.
-- **Safety restrictions**: opt-out recipients cannot be reimported by renaming their company; a recipient with prior outreach on another prospect cannot be sent a second simulated sequence; an owner note stops simulated follow-ups; no server exposure outside loopback.
-- **CSV export**: pipeline metadata with spreadsheet formula-injection mitigation; no message-body export.
-
-## Database schema note
-
-The pilot uses EF Core `EnsureCreated()`, **not migrations**. This iteration does not change the schema from iteration 2. The schema changed between iterations 1 and 2. If you previously ran the first ZIP, **make a backup of `outreachflow.db`** and then remove the *demo* database before starting iteration 2. Do not delete real prospect data you want to keep. A migration path is required before real production data or a hosted deployment.
-
-SQLite files are stored wherever the app's process working directory resolves `Data Source=outreachflow.db`; locate the file before resetting. Never commit SQLite files, backups, API keys, or `.env` secrets.
-
-## What is not implemented
-
-- Broad automated search across the public web: the current provider scans only a few HTML pages on the submitted official website and requires manual review. It may miss vendor instructions. A broader provider and PDF processing are future work.
-- Live mailbox sending, reply synchronization, webhook events, deliverability, opt-outs from live inboxes, and sent-mail history.
-- Actual due-time scheduling/worker, retries, delivery confirmation, locks, deduplicated event processing, or auto-transition on a timer. **The scheduling date is a preview only**.
-- Owner login, production authorization, migrations, backups, secure managed secrets, alerts, production HTTPS / DNS setup, or deployment to Lightsail.
-- Full contact-level deduplication by domain/branch, provider API rate limiting, legal opt-out footer, automated application submissions, phone/SMS automation, or AI-generated replies.
-
-See `ROADMAP.md` for the next safe slices. No AWS infrastructure was provisioned and no hosting cost was incurred.
-
-
-## Identity/workspace development branch
-
-See [MULTI-WORKSPACE-SETUP.md](MULTI-WORKSPACE-SETUP.md) for first-owner account setup, switching businesses, and preservation of your original SQLite database. This branch is an authentication foundation, not a deployable multi-user service. Do not merge until GitHub Actions and local browser checks pass.
+See [ROADMAP.md](ROADMAP.md), [RESEARCH-SETUP.md](RESEARCH-SETUP.md) (historical iteration notes), and [MULTI-WORKSPACE-SETUP.md](MULTI-WORKSPACE-SETUP.md).
