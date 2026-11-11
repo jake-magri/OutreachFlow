@@ -1,5 +1,8 @@
 using System.Net.Mail;
 using System.Security.Claims;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using OutreachFlow.Data;
@@ -8,6 +11,8 @@ using OutreachFlow.Models;
 namespace OutreachFlow.Services.Mailbox;
 
 public enum BatchInquiryMode { Simulated, Gmail }
+public sealed record BatchInquiryLine(string Company, string To, string Subject, string Body);
+public sealed record BatchInquiryPreview(string From, IReadOnlyList<BatchInquiryLine> Lines, string Hash);
 public sealed record BatchInquiryOutcome(string Company, int? ProspectId, string Result);
 public sealed record BatchInquiryResult(IReadOnlyList<BatchInquiryOutcome> Outcomes)
 {
@@ -29,8 +34,32 @@ public sealed class BatchInquiryService(
 {
     private sealed record Row(string Company, string Site, string Website, string Email);
 
+    public async Task<BatchInquiryPreview> PreviewAsync(ClaimsPrincipal user, string input,
+        CancellationToken ct = default)
+    {
+        var rows = Parse(input);
+        if (mode == BatchInquiryMode.Gmail)
+        {
+            var current = await PreviewAsync(user, input, ct);
+            if (string.IsNullOrWhiteSpace(approvalHash) || current.Hash != approvalHash)
+                throw new InvalidOperationException("The reviewed batch or message template changed. Review the exact messages again.");
+        }
+        await using var auth = await accounts.CreateDbContextAsync(ct);
+        var workspaceId = await MailboxOwner.RequireAsync(user, auth, ct);
+        await using var db = await factory.CreateDbContextAsync(ct);
+        var w = await db.Workspaces.AsNoTracking().SingleAsync(w => w.Id == workspaceId, ct);
+        var lines = rows.Select(r => new BatchInquiryLine(r.Company, r.Email,
+            Render(w.InitialSubjectTemplate, w, r), Render(w.InitialBodyTemplate, w, r))).ToArray();
+        if (string.IsNullOrWhiteSpace(w.SenderEmail) ||
+            lines.Any(x => string.IsNullOrWhiteSpace(x.Subject) || string.IsNullOrWhiteSpace(x.Body)))
+            throw new InvalidOperationException("Configure the sending identity and templates in Settings.");
+        var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(
+            JsonSerializer.Serialize(new { WorkspaceId = workspaceId, w.SenderEmail, rows, lines }))));
+        return new(w.SenderEmail, lines, hash);
+    }
+
     public async Task<BatchInquiryResult> RunAsync(ClaimsPrincipal user, string input,
-        BatchInquiryMode mode, bool approved, CancellationToken ct = default)
+        BatchInquiryMode mode, bool approved, string? approvalHash = null, CancellationToken ct = default)
     {
         if (!Enum.IsDefined(mode)) throw new InvalidOperationException("Invalid batch mode.");
         if (mode == BatchInquiryMode.Gmail && !approved)
@@ -173,6 +202,14 @@ public sealed class BatchInquiryService(
         }
         return rows;
     }
+
+    private static string Render(string template, Workspace w, Row row) =>
+        template.Replace("[business]", w.BusinessName, StringComparison.OrdinalIgnoreCase)
+            .Replace("[service]", w.ServiceDescription, StringComparison.OrdinalIgnoreCase)
+            .Replace("[area]", w.ServiceArea, StringComparison.OrdinalIgnoreCase)
+            .Replace("[company]", row.Company, StringComparison.OrdinalIgnoreCase)
+            .Replace("[sender]", w.SenderName, StringComparison.OrdinalIgnoreCase)
+            .Replace("[team]", "team", StringComparison.OrdinalIgnoreCase);
 
     private static string Key(string company, string site) => company.Trim() + "|" + site.Trim();
 }
