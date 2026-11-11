@@ -176,6 +176,25 @@ public sealed class OutreachService(IDbContextFactory<OutreachDbContext> factory
                 CheckedUtc = checkedUtc, IsOfficial = false
             });
         }
+        foreach (var link in scan.ProcessLinks.Take(20))
+        {
+            var title = "Process link: " + (string.IsNullOrWhiteSpace(link.AnchorText)
+                ? "Unlabeled link" : link.AnchorText);
+            if (title.Length > 200) title = title[..200];
+            var observation = $"{link.Relationship}; linked from {link.SourcePageUrl}; " +
+                $"{link.ProcessHint}. {link.VerificationState}.";
+            if (existing.Any(e => e.SourceUrl.Equals(link.DestinationUrl, StringComparison.OrdinalIgnoreCase)
+                && e.SourceTitle == title)) continue;
+            db.ResearchEvidence.Add(new ResearchEvidence
+            {
+                ProspectId = id,
+                SourceTitle = title,
+                SourceUrl = link.DestinationUrl,
+                ExcerptOrObservation = observation[..Math.Min(observation.Length, 1200)],
+                IsOfficial = false,
+                CheckedUtc = checkedUtc
+            });
+        }
         foreach (var diagnostic in scan.PageDiagnostics.Where(x => x.IsInconclusive).Take(6))
         {
             var title = "Research warning: content incomplete";
