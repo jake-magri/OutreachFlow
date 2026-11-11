@@ -9,3 +9,6 @@
 .env
 appsettings.Production.json
 **/TestResults/
+
+# Local workspace-specific research configuration; do not commit user business data.
+research-profiles/
