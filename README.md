@@ -83,3 +83,8 @@ SQLite files are stored wherever the app's process working directory resolves `D
 - Full contact-level deduplication by domain/branch, provider API rate limiting, legal opt-out footer, automated application submissions, phone/SMS automation, or AI-generated replies.
 
 See `ROADMAP.md` for the next safe slices. No AWS infrastructure was provisioned and no hosting cost was incurred.
+
+
+## Identity/workspace development branch
+
+See [MULTI-WORKSPACE-SETUP.md](MULTI-WORKSPACE-SETUP.md) for first-owner account setup, switching businesses, and preservation of your original SQLite database. This branch is an authentication foundation, not a deployable multi-user service. Do not merge until GitHub Actions and local browser checks pass.
