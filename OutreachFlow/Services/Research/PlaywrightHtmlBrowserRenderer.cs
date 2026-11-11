@@ -9,11 +9,15 @@ namespace OutreachFlow.Services.Research;
 /// </summary>
 public interface IHtmlBrowserRenderer
 {
-    Task<string> RenderAsync(Uri root, Uri page, Func<Uri, CancellationToken, Task<BrowserResource>> fetch,
+    Task<BrowserRenderResult> RenderAsync(Uri root, Uri page, Func<Uri, CancellationToken, Task<BrowserResource>> fetch,
         CancellationToken cancellationToken = default);
 }
 
 public sealed record BrowserResource(int StatusCode, string MediaType, string Body);
+
+// Aggregate counts only: no resource URLs, page bodies, credentials or cookies retained.
+public sealed record BrowserRenderResult(string Html, int FulfilledRequests,
+    int BlockedRequests, int BlockedScriptRequests, int UnsupportedRequests, int FailedRequests);
 
 public static class BrowserResearchPolicy
 {
@@ -46,13 +50,18 @@ public sealed class PlaywrightHtmlBrowserRenderer : IHtmlBrowserRenderer
     private static readonly TimeSpan MaxDuration = TimeSpan.FromSeconds(22);
     private static readonly TimeSpan RenderDelay = TimeSpan.FromSeconds(3);
 
-    public async Task<string> RenderAsync(Uri root, Uri page,
+    public async Task<BrowserRenderResult> RenderAsync(Uri root, Uri page,
         Func<Uri, CancellationToken, Task<BrowserResource>> fetch, CancellationToken cancellationToken = default)
     {
         if (!ResearchUrlPolicy.IsSameSite(root, page))
             throw new InvalidOperationException("Browser page is outside the approved site.");
 
         var requested = 0;
+        var fulfilled = 0;
+        var blocked = 0;
+        var blockedScripts = 0;
+        var unsupported = 0;
+        var failed = 0;
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(MaxDuration);
         var ct = timeout.Token;
@@ -74,9 +83,12 @@ public sealed class PlaywrightHtmlBrowserRenderer : IHtmlBrowserRenderer
         // answered from the vetted C# fetcher; no Route.ContinueAsync or Route.FetchAsync.
         await context.RouteAsync("**/*", async route =>
         {
-            if (!BrowserResearchPolicy.AllowResource(root, route.Request.Url, route.Request.Method) ||
-                Interlocked.Increment(ref requested) > MaxRequests)
+            var permitted = BrowserResearchPolicy.AllowResource(root, route.Request.Url, route.Request.Method);
+            if (!permitted || Interlocked.Increment(ref requested) > MaxRequests)
             {
+                Interlocked.Increment(ref blocked);
+                if (string.Equals(route.Request.ResourceType, "script", StringComparison.OrdinalIgnoreCase))
+                    Interlocked.Increment(ref blockedScripts);
                 await route.AbortAsync("blockedbyclient");
                 return;
             }
@@ -88,6 +100,7 @@ public sealed class PlaywrightHtmlBrowserRenderer : IHtmlBrowserRenderer
                 if (!BrowserResearchPolicy.AllowMediaType(response.MediaType) ||
                     response.Body.Length > MaxRenderedChars)
                 {
+                    Interlocked.Increment(ref unsupported);
                     await route.AbortAsync("blockedbyclient");
                     return;
                 }
@@ -98,10 +111,12 @@ public sealed class PlaywrightHtmlBrowserRenderer : IHtmlBrowserRenderer
                     ContentType = response.MediaType,
                     Body = response.Body
                 });
+                Interlocked.Increment(ref fulfilled);
             }
             catch (Exception ex) when (ex is HttpRequestException or InvalidOperationException
                                        or OperationCanceledException or IOException)
             {
+                Interlocked.Increment(ref failed);
                 await route.AbortAsync("blockedbyclient");
             }
         });
@@ -129,7 +144,7 @@ public sealed class PlaywrightHtmlBrowserRenderer : IHtmlBrowserRenderer
         var html = await browserPage.ContentAsync().WaitAsync(ct);
         if (html.Length > MaxRenderedChars)
             throw new InvalidOperationException("Browser-rendered HTML exceeded the research limit.");
-        return html;
+        return new BrowserRenderResult(html, fulfilled, blocked, blockedScripts, unsupported, failed);
     }
 
 }
