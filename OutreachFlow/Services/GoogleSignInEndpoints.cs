@@ -1,0 +1,118 @@
+using System.Security.Claims;
+using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Identity;
+using Microsoft.EntityFrameworkCore;
+using OutreachFlow.Data;
+using OutreachFlow.Models;
+
+namespace OutreachFlow.Services;
+
+/// <summary>
+/// Optional Google authentication and explicitly isolated first-time workspace
+/// provisioning, based on Google's stable subject identifier. Email address alone
+/// never links an existing identity or grants access to its workspaces.
+/// </summary>
+public static class GoogleSignInEndpoints
+{
+    public const string Provider = "Google";
+
+    // A single Google Cloud web OAuth client can support both the basic sign-in
+    // callback and the separate optional Gmail consent callback.
+    private static bool HasSeparateIdentityClient(IConfiguration config) =>
+        config["GoogleAuth:ClientId"] is not null ||
+        config["GoogleAuth:ClientSecret"] is not null;
+    public static string? ClientId(IConfiguration config) =>
+        HasSeparateIdentityClient(config) ? config["GoogleAuth:ClientId"] : config["Gmail:ClientId"];
+    public static string? ClientSecret(IConfiguration config) =>
+        HasSeparateIdentityClient(config) ? config["GoogleAuth:ClientSecret"] : config["Gmail:ClientSecret"];
+    public static bool Configured(IConfiguration config) =>
+        !string.IsNullOrWhiteSpace(ClientId(config)) &&
+        !string.IsNullOrWhiteSpace(ClientSecret(config));
+
+    public static IEndpointRouteBuilder MapGoogleSignIn(this IEndpointRouteBuilder app)
+    {
+        app.MapGet("/account/google/login", (IConfiguration config, SignInManager<ApplicationUser> signIn) =>
+        {
+            if (!Configured(config)) return Results.Redirect("/account/login?google=unavailable");
+            var properties = signIn.ConfigureExternalAuthenticationProperties(
+                Provider, "/account/google/callback");
+            return Results.Challenge(properties, [Provider]);
+        }).AllowAnonymous();
+
+        app.MapGet("/account/google/callback", async (HttpContext context,
+            UserManager<ApplicationUser> users, SignInManager<ApplicationUser> signIn,
+            GoogleUserProvisioner provisioner) =>
+        {
+            var info = await signIn.GetExternalLoginInfoAsync();
+            if (info is null || info.LoginProvider != Provider ||
+                string.IsNullOrWhiteSpace(info.ProviderKey))
+                return Results.Redirect("/account/login?google=failed");
+            try
+            {
+                var user = await users.FindByLoginAsync(info.LoginProvider, info.ProviderKey);
+                if (user is null)
+                {
+                    var registration = await provisioner.RegisterAsync(info);
+                    if (registration.User is null)
+                        return Results.Redirect("/account/login?google=" + registration.Status);
+                    user = registration.User;
+                }
+                if (await users.IsLockedOutAsync(user))
+                    return Results.Redirect("/account/login?google=locked");
+                await signIn.SignInAsync(user, isPersistent: false,
+                    authenticationMethod: info.LoginProvider);
+                return Results.Redirect("/");
+            }
+            catch (Exception ex) when (ex is InvalidOperationException or DbUpdateException)
+            {
+                // No leaking of Google identity information or partial database state.
+                return Results.Redirect("/account/login?google=failed");
+            }
+            finally
+            {
+                await context.SignOutAsync(IdentityConstants.ExternalScheme);
+            }
+        }).AllowAnonymous();
+
+        // An authenticated local user explicitly connects a Google subject once.
+        // The XSRF user ID embedded by SignInManager is validated at callback.
+        app.MapGet("/account/google/link", async (HttpContext context,
+            IConfiguration config, UserManager<ApplicationUser> users,
+            SignInManager<ApplicationUser> signIn) =>
+        {
+            if (!Configured(config)) return Results.Redirect("/account/workspaces?google=unavailable");
+            var user = await users.GetUserAsync(context.User);
+            if (user is null) return Results.Unauthorized();
+            var existing = await users.GetLoginsAsync(user);
+            if (existing.Any(x => x.LoginProvider == Provider))
+                return Results.Redirect("/account/workspaces?google=linked");
+            var properties = signIn.ConfigureExternalAuthenticationProperties(
+                Provider, "/account/google/link-callback", user.Id);
+            return Results.Challenge(properties, [Provider]);
+        }).RequireAuthorization();
+
+        app.MapGet("/account/google/link-callback", async (HttpContext context,
+            UserManager<ApplicationUser> users, SignInManager<ApplicationUser> signIn) =>
+        {
+            var user = await users.GetUserAsync(context.User);
+            if (user is null) return Results.Unauthorized();
+            var info = await signIn.GetExternalLoginInfoAsync(user.Id);
+            if (info is null || info.LoginProvider != Provider ||
+                string.IsNullOrWhiteSpace(info.ProviderKey))
+                return Results.Redirect("/account/workspaces?google=failed");
+            var existingOwner = await users.FindByLoginAsync(Provider, info.ProviderKey);
+            if (existingOwner is not null && existingOwner.Id != user.Id)
+            {
+                await context.SignOutAsync(IdentityConstants.ExternalScheme);
+                return Results.Redirect("/account/workspaces?google=alreadyused");
+            }
+            var result = await users.AddLoginAsync(user, info);
+            await context.SignOutAsync(IdentityConstants.ExternalScheme);
+            return Results.Redirect(result.Succeeded
+                ? "/account/workspaces?google=linked"
+                : "/account/workspaces?google=failed");
+        }).RequireAuthorization();
+
+        return app;
+    }
+}

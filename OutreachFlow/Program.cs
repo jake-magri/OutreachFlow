@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.AspNetCore.Authentication.OAuth.Claims;
 using Microsoft.AspNetCore.Identity;
 using OutreachFlow.Models;
 using System.Net;
@@ -9,8 +10,19 @@ using OutreachFlow.Data;
 using OutreachFlow.Services;
 using OutreachFlow.Services.Research;
 using OutreachFlow.Services.Discovery;
+using OutreachFlow.Services.Mailbox;
+using Microsoft.AspNetCore.DataProtection;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// Store local OAuth state and encrypted refresh-token keys outside the repository.
+// On Windows, protect the key ring with current-user DPAPI. Linux CI runs only
+// offline fixtures: Gmail connection deliberately remains unavailable there.
+var mailboxKeys = Path.Combine(builder.Environment.ContentRootPath, "mailbox-keys");
+var protection = builder.Services.AddDataProtection()
+    .SetApplicationName("OutreachFlow.Mailbox.v1")
+    .PersistKeysToFileSystem(new DirectoryInfo(mailboxKeys));
+if (OperatingSystem.IsWindows()) protection.ProtectKeysWithDpapi();
 
 builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents();
@@ -26,7 +38,30 @@ builder.Services.AddIdentityCore<ApplicationUser>(options =>
     options.Lockout.MaxFailedAccessAttempts = 5;
     options.Lockout.DefaultLockoutTimeSpan = TimeSpan.FromMinutes(15);
 }).AddSignInManager().AddEntityFrameworkStores<AccountDbContext>();
-builder.Services.AddAuthentication(IdentityConstants.ApplicationScheme).AddIdentityCookies();
+var auth = builder.Services.AddAuthentication(IdentityConstants.ApplicationScheme);
+auth.AddIdentityCookies();
+// Google sign-in needs only identity scopes. Gmail access is separately
+// consented to from Mailbox using gmail.readonly, never at login.
+if (GoogleSignInEndpoints.Configured(builder.Configuration))
+{
+    auth.AddGoogle(GoogleSignInEndpoints.Provider, options =>
+    {
+        options.ClientId = GoogleSignInEndpoints.ClientId(builder.Configuration)!;
+        options.ClientSecret = GoogleSignInEndpoints.ClientSecret(builder.Configuration)!;
+        options.SignInScheme = IdentityConstants.ExternalScheme;
+        options.CallbackPath = "/signin-google";
+        options.Scope.Clear();
+        options.Scope.Add("openid");
+        options.Scope.Add("email");
+        options.Scope.Add("profile");
+        options.SaveTokens = false;
+        // Google's OAuth userinfo response explicitly reports verified_email.
+        // Fail closed for first-time registration if that flag is absent/false.
+        options.ClaimActions.Add(new JsonKeyClaimAction("google_email_verified", "string", "verified_email"));
+        options.ClaimActions.Add(new JsonKeyClaimAction("google_verified_email", "string", "email_verified"));
+        options.CorrelationCookie.SecurePolicy = CookieSecurePolicy.Always;
+    });
+}
 builder.Services.Configure<CookieAuthenticationOptions>(IdentityConstants.ApplicationScheme, options =>
 {
     options.LoginPath = "/account/login";
@@ -37,6 +72,7 @@ builder.Services.Configure<CookieAuthenticationOptions>(IdentityConstants.Applic
 });
 builder.Services.AddAuthorization();
 builder.Services.AddScoped<IWorkspaceAccess, AuthenticatedWorkspaceAccess>();
+builder.Services.AddScoped<GoogleUserProvisioner>();
 
 builder.Services.AddDbContextFactory<OutreachDbContext>(options =>
     options.UseSqlite(builder.Configuration.GetConnectionString("OutreachFlow")
@@ -54,6 +90,20 @@ builder.Services.AddHttpClient<IWebSearchProvider, TavilySearchProvider>(client 
     AllowAutoRedirect = false,
     UseProxy = false
 });
+builder.Services.AddSingleton(sp => new GmailConnectionStore(
+    Path.Combine(builder.Environment.ContentRootPath, "mailbox-connections"),
+    sp.GetRequiredService<IDataProtectionProvider>()));
+builder.Services.AddHttpClient("GmailOAuth", client => client.Timeout = TimeSpan.FromSeconds(15))
+    .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+    {
+        AllowAutoRedirect = false, UseProxy = false
+    });
+builder.Services.AddHttpClient("GmailApi", client => client.Timeout = TimeSpan.FromSeconds(15))
+    .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+    {
+        AllowAutoRedirect = false, UseProxy = false
+    });
+builder.Services.AddScoped<GmailMailboxService>();
 builder.Services.AddScoped<OpportunityDiscoveryService>();
 builder.Services.AddScoped<OutreachService>();
 builder.Services.AddSingleton<IHtmlBrowserRenderer, PlaywrightHtmlBrowserRenderer>();
@@ -97,6 +147,8 @@ using (var scope = app.Services.CreateScope())
 }
 
 app.MapOutreachAccounts();
+app.MapGoogleSignIn();
+app.MapGmailMailboxEndpoints();
 
 // Local export of pipeline metadata (not email content).
 app.MapGet("/export/prospects.csv", async (OutreachService service) =>

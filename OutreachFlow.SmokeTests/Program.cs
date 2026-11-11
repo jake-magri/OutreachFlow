@@ -5,6 +5,13 @@ using OutreachFlow.Services.Discovery;
 using OutreachFlow.Data;
 using OutreachFlow.Models;
 using OutreachFlow.Services;
+using OutreachFlow.Services.Mailbox;
+using Microsoft.AspNetCore.DataProtection;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.AspNetCore.Identity;
+using System.Text;
+using System.Text.Json;
 
 static void Check(bool ok, string scenario)
 {
@@ -22,6 +29,193 @@ static async Task MustReject(Func<Task> action, string scenario)
     }
     throw new Exception($"FAILED: {scenario}");
 }
+
+// Google-first signup requires a positive verified-email claim and never guesses.
+static System.Security.Claims.ClaimsPrincipal GooglePrincipal(string email, string verified)
+{
+    var identity = new System.Security.Claims.ClaimsIdentity("Google");
+    identity.AddClaim(new System.Security.Claims.Claim(
+        System.Security.Claims.ClaimTypes.Email, email));
+    identity.AddClaim(new System.Security.Claims.Claim("google_email_verified", verified));
+    return new System.Security.Claims.ClaimsPrincipal(identity);
+}
+Check(GoogleSignupPolicy.VerifiedEmail(GooglePrincipal("new-owner@example.org", "true"))
+          == "new-owner@example.org" &&
+      GoogleSignupPolicy.VerifiedEmail(GooglePrincipal("new-owner@example.org", "false"))
+          is null &&
+      GoogleSignupPolicy.VerifiedEmail(GooglePrincipal("not-an-email", "true"))
+          is null &&
+      GoogleSignupPolicy.VerifiedEmail(new System.Security.Claims.ClaimsPrincipal()) is null,
+    "Google-first registration requires a confirmed, syntactically valid email");
+var googleWorkspaceOne = GoogleSignupPolicy.NewWorkspace("first@example.org");
+var googleWorkspaceTwo = GoogleSignupPolicy.NewWorkspace("second@example.org");
+Check(googleWorkspaceOne.SenderEmail == "first@example.org" &&
+      googleWorkspaceTwo.SenderEmail == "second@example.org" &&
+      googleWorkspaceOne.BusinessName == "New workspace" &&
+      googleWorkspaceOne.Id == 0 && googleWorkspaceTwo.Id == 0 &&
+      string.IsNullOrWhiteSpace(googleWorkspaceOne.PostalAddress) &&
+      string.IsNullOrWhiteSpace(googleWorkspaceOne.TargetDescription),
+    "Google-first workspace defaults do not share IDs or invent business identity");
+
+// Provisioning integration: two previously unknown Google subjects must never
+// share a business workspace or adopt an existing password user's account.
+var signupDirectory = Path.Combine(Path.GetTempPath(),
+    "outreachflow-google-signup-" + Guid.NewGuid().ToString("N"));
+try
+{
+    Directory.CreateDirectory(signupDirectory);
+    using var services = new ServiceCollection()
+        .AddLogging()
+        .AddDbContextFactory<AccountDbContext>(options => options.UseSqlite(
+            "Data Source=" + Path.Combine(signupDirectory, "accounts.db")))
+        .AddDbContextFactory<OutreachDbContext>(options => options.UseSqlite(
+            "Data Source=" + Path.Combine(signupDirectory, "business.db")))
+        .AddIdentityCore<ApplicationUser>(options => options.User.RequireUniqueEmail = true)
+        .AddEntityFrameworkStores<AccountDbContext>()
+        .Services.AddScoped<GoogleUserProvisioner>()
+        .BuildServiceProvider();
+
+    using var signupScope = services.CreateScope();
+    var signupAccounts = signupScope.ServiceProvider.GetRequiredService<AccountDbContext>();
+    var signupFactory = signupScope.ServiceProvider
+        .GetRequiredService<IDbContextFactory<OutreachDbContext>>();
+    await signupAccounts.Database.EnsureCreatedAsync();
+    await using (var database = await signupFactory.CreateDbContextAsync())
+        await database.Database.EnsureCreatedAsync();
+
+    var provisioner = signupScope.ServiceProvider.GetRequiredService<GoogleUserProvisioner>();
+    var firstLogin = new ExternalLoginInfo(
+        GooglePrincipal("first@example.org", "true"),
+        "Google", "google-subject-1", "Google");
+    var secondLogin = new ExternalLoginInfo(
+        GooglePrincipal("second@example.org", "true"),
+        "Google", "google-subject-2", "Google");
+    var first = await provisioner.RegisterAsync(firstLogin);
+    var second = await provisioner.RegisterAsync(secondLogin);
+    var memberships = await signupAccounts.Memberships.AsNoTracking()
+        .OrderBy(m => m.UserId).ToListAsync();
+    Check(first.User is not null && second.User is not null &&
+          first.User.Id != second.User.Id &&
+          first.User.ActiveWorkspaceId is > 0 &&
+          second.User.ActiveWorkspaceId is > 0 &&
+          first.User.ActiveWorkspaceId != second.User.ActiveWorkspaceId &&
+          memberships.Count == 2 &&
+          memberships.All(m => m.Role == "Owner"),
+        "Google-first registration provisions distinct users and owner-only workspaces");
+    await using (var db = await signupFactory.CreateDbContextAsync())
+    {
+        var createdWorkspaces = await db.Workspaces.AsNoTracking().ToListAsync();
+        Check(createdWorkspaces.Count == 2 &&
+              createdWorkspaces.All(w => w.BusinessName == "New workspace") &&
+              createdWorkspaces.Select(w => w.SenderEmail)
+                  .OrderBy(x => x).SequenceEqual(
+                      new[] { "first@example.org", "second@example.org" }),
+            "Google-first registration creates clean business records without inherited data");
+    }
+    var collision = await provisioner.RegisterAsync(new ExternalLoginInfo(
+        GooglePrincipal("first@example.org", "true"),
+        "Google", "different-google-subject", "Google"));
+    var unverified = await provisioner.RegisterAsync(new ExternalLoginInfo(
+        GooglePrincipal("third@example.org", "false"),
+        "Google", "unverified-google-subject", "Google"));
+    Check(collision.Status == "notlinked" && collision.User is null &&
+          unverified.Status == "unverified" && unverified.User is null &&
+          await signupAccounts.Memberships.CountAsync() == 2,
+        "email collisions and unverified identities cannot create or hijack workspaces");
+}
+finally { try { Directory.Delete(signupDirectory, recursive: true); } catch { } }
+
+// Google identity login and Gmail authorization intentionally share a configurable
+// OAuth client but retain separate callbacks/scopes and explicit account linking.
+var googleConfig = new Microsoft.Extensions.Configuration.ConfigurationBuilder()
+    .AddInMemoryCollection(new Dictionary<string, string?>
+    {
+        ["Gmail:ClientId"] = "local-web-client",
+        ["Gmail:ClientSecret"] = "offline-fixture-secret"
+    }).Build();
+Check(GoogleSignInEndpoints.Configured(googleConfig) &&
+      GoogleSignInEndpoints.ClientId(googleConfig) == "local-web-client" &&
+      GoogleSignInEndpoints.ClientSecret(googleConfig) == "offline-fixture-secret" &&
+      !GoogleSignInEndpoints.Configured(
+          new Microsoft.Extensions.Configuration.ConfigurationBuilder().Build()),
+    "Google login reuses optional configured OAuth client but stays disabled without credentials");
+var alternateIdentityConfig = new Microsoft.Extensions.Configuration.ConfigurationBuilder()
+    .AddInMemoryCollection(new Dictionary<string, string?>
+    {
+        ["Gmail:ClientId"] = "mailbox-client",
+        ["Gmail:ClientSecret"] = "mailbox-secret",
+        ["GoogleAuth:ClientId"] = "basic-signin-client",
+        ["GoogleAuth:ClientSecret"] = "basic-signin-secret"
+    }).Build();
+Check(GoogleSignInEndpoints.ClientId(alternateIdentityConfig) == "basic-signin-client" &&
+      GoogleSignInEndpoints.ClientSecret(alternateIdentityConfig) == "basic-signin-secret",
+    "optional separate identity client takes precedence without expanding Gmail scopes");
+
+// Gmail OAuth and message parser tests run offline; no mailbox or outbound send.
+Check(GmailMailboxService.IsAllowedRedirectUri("https://localhost:7117/mailbox/google/callback") &&
+      GmailMailboxService.IsAllowedRedirectUri("https://127.0.0.1:7117/mailbox/google/callback") &&
+      !GmailMailboxService.IsAllowedRedirectUri("http://localhost:7117/mailbox/google/callback") &&
+      !GmailMailboxService.IsAllowedRedirectUri("https://attacker.example.org/mailbox/google/callback") &&
+      !GmailMailboxService.IsAllowedRedirectUri("https://localhost:7117/mailbox/google/callback?next=evil"),
+    "Gmail OAuth redirect is limited to exact HTTPS loopback callback");
+var verifier = GmailMailboxService.NewVerifier();
+var pkceChallenge = GmailMailboxService.Challenge(verifier);
+Check(verifier.Length is >= 43 and <= 128 && pkceChallenge.Length == 43 &&
+      pkceChallenge != verifier && verifier != GmailMailboxService.NewVerifier(),
+    "Google PKCE uses a unique random verifier and SHA-256 challenge");
+
+var mailboxFixture = Path.Combine(Path.GetTempPath(), "outreachflow-gmail-" + Guid.NewGuid().ToString("N"));
+try
+{
+    Directory.CreateDirectory(mailboxFixture);
+    var keys = DataProtectionProvider.Create(new DirectoryInfo(Path.Combine(mailboxFixture, "keys")));
+    var store = new GmailConnectionStore(Path.Combine(mailboxFixture, "connections"), keys);
+    Check(await store.LoadAsync(1) is null, "no saved Gmail authorization is disconnected");
+    await store.SaveAsync(1, new GmailConnection("owner@example.org", "offline-refresh-token-fixture"));
+    var encryptedPath = Path.Combine(mailboxFixture, "connections", "workspace-1.protected");
+    var savedContent = await File.ReadAllTextAsync(encryptedPath);
+    var loaded = await store.LoadAsync(1);
+    Check(!savedContent.Contains("offline-refresh-token-fixture", StringComparison.Ordinal) &&
+          loaded?.Email == "owner@example.org" &&
+          loaded.RefreshToken == "offline-refresh-token-fixture" &&
+          await store.LoadAsync(2) is null,
+        "Gmail refresh tokens are protected at rest and isolated by workspace");
+    await store.DisconnectAsync(1);
+    Check(await store.LoadAsync(1) is null, "Gmail local authorization can be disconnected");
+}
+finally { try { Directory.Delete(mailboxFixture, recursive: true); } catch { } }
+
+var encodedBody = GmailMailboxService.Base64Url(Encoding.UTF8.GetBytes(
+    "Thanks, we are interested in a vendor call."));
+var receivedMillis = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+using var gmailMessage = JsonDocument.Parse(JsonSerializer.Serialize(new
+{
+    internalDate = receivedMillis.ToString(),
+    labelIds = new[] { "INBOX" },
+    payload = new
+    {
+        mimeType = "text/plain",
+        headers = new[]
+        {
+            new { name = "From", value = "Vendor Team <procurement@example.org>" },
+            new { name = "Subject", value = "Re: Fleet washing" }
+        },
+        body = new { data = encodedBody }
+    }
+}));
+var parsedReply = GmailMailboxService.ParseInbound("provider-id-1", gmailMessage.RootElement,
+    10, "Buyer Co", "procurement@example.org");
+Check(parsedReply?.ProspectId == 10 &&
+      parsedReply.Sender == "procurement@example.org" &&
+      parsedReply.Body.Contains("interested in a vendor call", StringComparison.Ordinal) &&
+      parsedReply.Subject == "Re: Fleet washing" &&
+      GmailMailboxService.ParseInbound("provider-id-1", gmailMessage.RootElement,
+          10, "Buyer Co", "other@example.org") is null,
+    "Gmail reply parser requires exact recipient match and decodes plain text");
+using var malformedGmail = JsonDocument.Parse("""{"payload":{"headers":[]}}""");
+Check(GmailMailboxService.ParseInbound("provider-id-2", malformedGmail.RootElement,
+        10, "Buyer Co", "procurement@example.org") is null,
+    "malformed Gmail headers cannot generate an inbound reply");
 
 // Explicit developer-only live probe: same downloader, user-agent, redirect/robots rules
 // as the app. Logs only bounded public page metadata, not full HTML or script URLs.

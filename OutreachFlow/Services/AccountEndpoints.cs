@@ -43,11 +43,19 @@ public static class AccountEndpoints
             return Results.Redirect("/");
         }).AllowAnonymous();
 
-        app.MapGet("/account/login", (HttpContext ctx, IAntiforgery xsrf) =>
-            Page(ctx, xsrf, "Sign in to OutreachFlow", "/account/login",
+        app.MapGet("/account/login", (HttpContext ctx, IAntiforgery xsrf,
+            IConfiguration config) =>
+        {
+            var google = GoogleSignInEndpoints.Configured(config)
+                ? "<p><a href='/account/google/login'>Continue with Google</a></p>" +
+                  "<small>New here? Continue with Google creates your private workspace. Existing password users should link Google once from Workspaces to retain their data.</small>"
+                : "";
+            var page = Page(ctx, xsrf, "Sign in to OutreachFlow", "/account/login",
                 "<label>Email <input name='email' type='email' autocomplete='username' required /></label>" +
                 "<label>Password <input name='password' type='password' autocomplete='current-password' required /></label>",
-                "Sign in")).AllowAnonymous();
+                "Sign in", google);
+            return page;
+        }).AllowAnonymous();
 
         app.MapPost("/account/login", async (HttpContext ctx, IAntiforgery xsrf,
             SignInManager<ApplicationUser> signIn) =>
@@ -75,7 +83,7 @@ public static class AccountEndpoints
 
         app.MapGet("/account/workspaces", async (HttpContext ctx, IAntiforgery xsrf,
             AccountDbContext accounts, IDbContextFactory<OutreachDbContext> factory,
-            UserManager<ApplicationUser> users) =>
+            UserManager<ApplicationUser> users, IConfiguration config) =>
         {
             var userId = users.GetUserId(ctx.User)!;
             var memberships = await accounts.Memberships.AsNoTracking()
@@ -91,13 +99,27 @@ public static class AccountEndpoints
                 (w.Id == active ? "checked" : "") + " /> " +
                 WebUtility.HtmlEncode(w.BusinessName) + "</label>"));
             var token = xsrf.GetAndStoreTokens(ctx).RequestToken!;
+            var google = GoogleSignInEndpoints.Configured(config)
+                ? "<h2>Google sign-in</h2>" +
+                  "<p>Link your existing account to Google's stable account ID to sign in without a local password. Gmail access is requested separately.</p>" +
+                  "<p><a href='/account/google/link'>Link Google sign-in</a></p>"
+                : "";
             var fields = "<form method='post' action='/account/switch-workspace'>" +
                 HiddenToken(token) + choices + "<button>Switch workspace</button></form>" +
+                google +
                 "<h2>New business workspace</h2>" +
                 "<form method='post' action='/account/create-workspace'>" +
                 HiddenToken(token) + "<label>Business name <input name='name' maxlength='150' required /></label>" +
                 "<button>Create workspace</button></form>";
-            return Html("Your workspaces", fields, ctx);
+            var status = ctx.Request.Query["google"].ToString() switch
+            {
+                "linked" => "<p>Google sign-in linked successfully.</p>",
+                "failed" => "<p role='alert'>Google linking failed; no changes were made.</p>",
+                "alreadyused" => "<p role='alert'>Google account is already linked to another OutreachFlow user.</p>",
+                "unavailable" => "<p role='alert'>Google sign-in isn't configured.</p>",
+                _ => ""
+            };
+            return Html("Your workspaces", status + fields, ctx);
         }).RequireAuthorization();
 
         app.MapPost("/account/switch-workspace", async (HttpContext ctx, IAntiforgery xsrf,
@@ -152,14 +174,27 @@ public static class AccountEndpoints
         WebUtility.HtmlEncode(token) + "' />";
 
     private static IResult Page(HttpContext ctx, IAntiforgery xsrf,
-        string title, string action, string fields, string button)
+        string title, string action, string fields, string button,
+        string extraContent = "")
     {
         var token = xsrf.GetAndStoreTokens(ctx).RequestToken!;
         var error = ctx.Request.Query.ContainsKey("failed")
             ? "<p role='alert'>Sign-in failed. Check your credentials or wait before retrying.</p>" : "";
-        return Html(title, error + "<form method='post' action='" + action + "'>" +
+        var googleStatus = ctx.Request.Query["google"].ToString() switch
+        {
+            "notlinked" => "<p role='alert'>An account already uses this email. Sign in with your existing password and link Google from Workspaces; we never merge accounts based on email alone.</p>",
+            "failed" => "<p role='alert'>Google sign-in or linking failed. Try again.</p>",
+            "unavailable" => "<p role='alert'>Google sign-in has not been configured.</p>",
+            "alreadyused" => "<p role='alert'>That Google account is already linked to another account.</p>",
+            "locked" => "<p role='alert'>This account is locked. Try again later.</p>",
+            "linked" => "<p>Google sign-in is linked. You can now use Continue with Google at login.</p>",
+            "unverified" => "<p role='alert'>Google did not confirm a verified email address. Account registration was not completed.</p>",
+            _ => ""
+        };
+        return Html(title, error + googleStatus +
+            "<form method='post' action='" + action + "'>" +
             HiddenToken(token) + fields + "<button>" + WebUtility.HtmlEncode(button) +
-            "</button></form>", ctx);
+            "</button></form>" + extraContent, ctx);
     }
 
     private static IResult Html(string title, string body, HttpContext ctx) =>
