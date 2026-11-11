@@ -2,7 +2,7 @@
 
 **Local-first B2B opportunity discovery, source-backed research, prospect tracking and human handoff.**
 
-OutreachFlow is a .NET 10 Blazor Server interactive web app using EF Core, ASP.NET Core Identity, SQLite, Tavily Search, bounded public HTML research, optional Playwright rendering and optional Google/Gmail OAuth. It is an **early local prototype**, not a hosted SaaS product. Simulation uses **`DryRunEmail`**. A separate, disabled-by-default Windows pilot can send one owner-approved Gmail inquiry with durable delivery tracking. See [GMAIL-SENDING-PILOT.md](GMAIL-SENDING-PILOT.md).
+OutreachFlow is a .NET 10 Blazor Server interactive web app using EF Core, ASP.NET Core Identity, SQLite, Tavily Search, bounded public HTML research, optional Playwright rendering and optional Google/Gmail OAuth. It is an **early local prototype**, not a hosted SaaS product. Simulation uses **`DryRunEmail`**. A separate, disabled-by-default Windows pilot **has completed a controlled live Gmail send-and-reply acceptance test**: one owner-approved initial inquiry, one imported genuine reply and persistent history. It is not an unattended sender. See [GMAIL-SENDING-PILOT.md](GMAIL-SENDING-PILOT.md).
 
 ## Current functionality
 
@@ -17,7 +17,7 @@ OutreachFlow is a .NET 10 Blazor Server interactive web app using EF Core, ASP.N
 
 OutreachFlow is **research-first, not a bulk email or autonomous sales agent**. A search hit, public email address or unofficial link is never treated as a verified invitation to send. Current Gmail candidate matching uses a sender address and manually attested outbound history; it does not establish a Gmail thread, authenticated sender or contractual interest. Always review the message in Gmail and manually confirm relevance before importing it.
 
-**Not yet implemented:** scheduled dispatch/retries, thread-backed inbound correlation, unattended reply polling, bounce/complaint handling, buyer-first account discovery (see issue #10), production operational recovery, account recovery, cloud hosting or billing. Local migration/recovery tools and provider identities are implemented; controlled live Gmail acceptance is pending.
+**Not yet implemented:** scheduled follow-up dispatch/retries, thread-backed inbound correlation, unattended reply polling, bounce/complaint handling, buyer-first account discovery (issue #10), production operational recovery, account recovery, cloud hosting or billing. Local migration/recovery tools, provider identity and a **manually approved first Gmail send** are implemented and locally accepted. Offline provider-failure tests are not substitutes for real-world reliability evidence.
 
 ## Source layout
 
@@ -54,7 +54,7 @@ Visit `https://localhost:7117`. On a fresh database, set up the first password o
 
 - Tavily: `dotnet user-secrets set "Tavily:ApiKey" "YOUR_KEY" --project OutreachFlow`.
 - Google sign-in and Gmail: configure an OAuth 2.0 **Web application** with `https://localhost:7117/signin-google` and `https://localhost:7117/mailbox/google/callback`, then follow [MAILBOX-PILOT.md](MAILBOX-PILOT.md). Basic Google identity scopes and Gmail read access require separate consent.
-- Google `gmail.readonly` is a restricted OAuth scope; a public SaaS release requires additional provider verification/security planning. The current Gmail integration has **no** `gmail.send` permission.
+- Google `gmail.readonly` is a restricted OAuth scope; a public SaaS release requires additional provider verification/security planning. An optional, separate **Grant Gmail sending permission** action requests `gmail.send` alongside the read scope; it is never granted by basic Google login or a read-only connection. `Gmail:EnableSending` defaults to `false`, and an eligible owner must still approve each initial inquiry.
 - Optional browser research: see [BROWSER-RESEARCH-PILOT.md](BROWSER-RESEARCH-PILOT.md).
 
 Secrets must remain in local development secret storage; never commit client secrets, refresh tokens, screenshots containing tokens, or local business records.
@@ -68,7 +68,7 @@ Secrets must remain in local development secret storage; never commit client sec
 - `mailbox-connections/`: encrypted workspace Gmail refresh tokens.
 - `mailbox-keys/`: DataProtection key ring, protected with current-user Windows DPAPI.
 
-**Local backup/restore foundation (issue #16, first slice):** after stopping the app, use `OutreachFlow.RecoveryCli` to snapshot both SQLite databases through SQLite's backup API and capture auxiliary local state, then verify checksums and restore into a new directory. See [RECOVERY-PLAYBOOK.md](RECOVERY-PLAYBOOK.md) for commands, privacy safeguards and manual acceptance. This is **operator-invoked**, not automated/production-ready. The bundle contains sensitive business records and OAuth key material and must be encrypted and protected. DPAPI-protected keys and tokens are not portable to a different Windows account/machine without deliberate recovery or reconnect. Fresh business and Identity databases are initialized with EF migrations. Existing installations now require the recovery CLI `upgrade` command before startup to adopt the baseline and apply the provider identity migration. The command creates a verified recovery bundle first. See [MIGRATION-BASELINE.md](MIGRATION-BASELINE.md). Do not delete databases to try a new branch.
+**Local backup/restore and EF migration foundation (issue #16, partial):** after stopping the app, use `OutreachFlow.RecoveryCli` to snapshot both SQLite databases through SQLite's backup API and capture auxiliary local state, then verify checksums and restore into a new directory. See [RECOVERY-PLAYBOOK.md](RECOVERY-PLAYBOOK.md) for commands, privacy safeguards and manual acceptance. This is **operator-invoked**, not automated/production-ready. The bundle contains sensitive business records and OAuth key material and must be encrypted and protected. DPAPI-protected keys and tokens are not portable to a different Windows account/machine without deliberate recovery or reconnect. Fresh business and Identity databases are initialized with EF migrations. Existing installations now require the recovery CLI `upgrade` command before startup to adopt the baseline and apply the provider identity migration. The command creates a verified recovery bundle first. See [MIGRATION-BASELINE.md](MIGRATION-BASELINE.md). Do not delete databases to try a new branch.
 
 The app fails closed outside ASP.NET Core Development and refuses non-loopback requests. It is **not** safe to expose publicly or deploy using `Dockerfile.future`.
 
@@ -78,9 +78,9 @@ The app fails closed outside ASP.NET Core Development and refuses non-loopback r
 - [AUDIT-2026-11-11.md](AUDIT-2026-11-11.md): repository-wide code audit, confirmed findings and prioritized risks.
 - [TEST-CHECKLIST.md](TEST-CHECKLIST.md): manual acceptance checklist.
 - [TRIAGE-PILOT.md](TRIAGE-PILOT.md): pilot classification and manual route-approval tests.
-- [MAILBOX-PILOT.md](MAILBOX-PILOT.md): Google OAuth and read-only mailbox pilot.
+- [MAILBOX-PILOT.md](MAILBOX-PILOT.md): historical Google OAuth and read-only mailbox pilot; [GMAIL-SENDING-PILOT.md](GMAIL-SENDING-PILOT.md) documents the now-accepted one-message sending pilot.
 - [RECOVERY-PLAYBOOK.md](RECOVERY-PLAYBOOK.md): local backup, integrity verification and restore-to-new-directory procedures.
 - [MIGRATION-BASELINE.md](MIGRATION-BASELINE.md): generated EF migrations, schema inspection and optional backed-up adoption.
 - [GitHub issues](https://github.com/jake-magri/OutreachFlow/issues): planned work and tracked technical debt.
 
-The historical PR-specific pilot notes describe how features were built at the time and are **not** the current product readiness checklist.
+The historical PR-specific pilot notes describe how features were built at the time and are **not** the current product readiness checklist. The source of truth for remaining acceptance is [ROADMAP.md](ROADMAP.md), current open [GitHub issues](https://github.com/jake-magri/OutreachFlow/issues), and the latest [TEST-CHECKLIST.md](TEST-CHECKLIST.md).

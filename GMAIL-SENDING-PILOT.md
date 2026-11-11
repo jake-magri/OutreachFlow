@@ -1,5 +1,7 @@
 # Controlled Gmail sending pilot
 
+**Acceptance recorded November 11, 2026 (merged PR #27):** one explicitly approved Gmail inquiry reached a controlled recipient, one genuine reply was imported once as Interested, the prospect became WarmLead and a restart plus inbox review showed retained history without repeat import. The procedure below is retained for **future regression or fresh-install verification**; do not interpret unchecked steps as a claim that the November 11 test remains pending.
+
 This Windows localhost pilot sends **one explicitly approved initial inquiry**. It stays disabled by default. Google sign-in and an existing read-only Gmail connection do not enable sending. Simulation continues to use `DryRunEmail` through its separate API.
 
 ## Upgrade and enable locally
@@ -28,7 +30,7 @@ In Google Cloud's consent configuration, make `https://www.googleapis.com/auth/g
 6. Reload the prospect. There must be no second send action for that inquiry. Reply from the controlled recipient inbox, use Mailbox review, classify and record it, and verify import happens once. The matching algorithm remains sender-based pending issue #13; review each candidate manually.
 7. Restart the app and verify the send/reply history remains. Run the inbox review again and confirm the already-imported reply is absent.
 
-Stop after each step if anything differs and capture the current view. Live acceptance is pending until the owner completes these steps. No real mail is sent by the offline tests or by enabling the toggle alone.
+Stop after each step if anything differs and capture the current view. The owner completed a controlled live acceptance on November 11, 2026, documented in [merged PR #27](https://github.com/jake-magri/OutreachFlow/pull/27). Offline tests and the toggle alone do not transmit real email; the eligible owner must still approve an exact inquiry. Real provider timeout/quota/revocation behavior was covered with offline fixtures, not induced against Google.
 
 ## Delivery states and recovery
 
@@ -61,4 +63,4 @@ Offline coverage includes owner/workspace checks, exact approvals, double-click 
 - [Google OAuth server flow and granted scopes](https://developers.google.com/identity/protocols/oauth2/web-server)
 - [Gmail error handling](https://developers.google.com/workspace/gmail/api/guides/handle-errors)
 
-Issue #14 stays open until controlled real-mail acceptance. Thread-backed reply correlation (#13), scheduling (#15), fuller UX (#21) and hosted security/recovery work remain separate gates.
+The local live-send definition of done for issue #14 is reported satisfied in merged PR #27; **issue #14 remains open in GitHub and should be reconciled/closed only after checking its full acceptance criteria**. Thread-backed reply correlation (#13), scheduling (#15), clearer UX (#21) and hosted security/recovery work remain separate gates.
