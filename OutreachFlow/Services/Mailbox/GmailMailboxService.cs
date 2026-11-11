@@ -158,8 +158,12 @@ public sealed partial class GmailMailboxService(IConfiguration config, IHttpClie
     {
         parameters["client_id"] = config["Gmail:ClientId"] ?? "";
         parameters["client_secret"] = config["Gmail:ClientSecret"] ?? "";
-        using var response = await clients.CreateClient("GmailOAuth").PostAsync(TokenEndpoint,
-            new FormUrlEncodedContent(parameters), ct);
+        using var request = new HttpRequestMessage(HttpMethod.Post, TokenEndpoint)
+        {
+            Content = new FormUrlEncodedContent(parameters)
+        };
+        using var response = await clients.CreateClient("GmailOAuth").SendAsync(request,
+            HttpCompletionOption.ResponseHeadersRead, ct);
         if (!response.IsSuccessStatusCode)
             throw new InvalidOperationException("Google authorization failed; reconnect or review OAuth settings.");
         return await BoundedJsonAsync(response, ct);
@@ -261,13 +265,21 @@ public sealed partial class GmailMailboxService(IConfiguration config, IHttpClie
             payload.ValueKind != JsonValueKind.Object ||
             !payload.TryGetProperty("headers", out var headers) ||
             headers.ValueKind != JsonValueKind.Array || headers.GetArrayLength() > 100) return null;
+        // Reject malformed header shapes rather than allowing a single invalid
+        // provider field to fail the whole bounded inbox review.
+        foreach (var header in headers.EnumerateArray())
+            if (header.ValueKind != JsonValueKind.Object ||
+                !header.TryGetProperty("name", out var name) ||
+                name.ValueKind != JsonValueKind.String ||
+                !header.TryGetProperty("value", out var value) ||
+                value.ValueKind != JsonValueKind.String)
+                return null;
         string Header(string name)
         {
             foreach (var header in headers.EnumerateArray())
-                if (header.TryGetProperty("name", out var n) &&
-                    n.GetString()?.Equals(name, StringComparison.OrdinalIgnoreCase) == true &&
-                    header.TryGetProperty("value", out var value))
-                    return value.GetString() ?? "";
+                if (header.GetProperty("name").GetString()
+                    ?.Equals(name, StringComparison.OrdinalIgnoreCase) == true)
+                    return header.GetProperty("value").GetString() ?? "";
             return "";
         }
         if (!message.TryGetProperty("id", out var sourceId) ||
@@ -328,9 +340,10 @@ public sealed partial class GmailMailboxService(IConfiguration config, IHttpClie
         {
             var raw = data.Replace('-', '+').Replace('_', '/');
             raw = raw.PadRight((raw.Length + 3) / 4 * 4, '=');
-            return Encoding.UTF8.GetString(Convert.FromBase64String(raw));
+            return new UTF8Encoding(false, true).GetString(Convert.FromBase64String(raw));
         }
         catch (FormatException) { return ""; }
+        catch (DecoderFallbackException) { return ""; }
     }
 
     /// <summary>
