@@ -31,13 +31,24 @@ public static class AccountEndpoints
             var email = form["email"].ToString().Trim();
             var password = form["password"].ToString();
             await using var db = await factory.CreateDbContextAsync();
-            var workspaceId = await db.Workspaces.OrderBy(w => w.Id).Select(w => w.Id).FirstAsync();
+            var existingId = await db.Workspaces.OrderBy(w => w.Id)
+                .Select(w => (int?)w.Id).FirstOrDefaultAsync();
+            // Preserve the pre-Identity local business data if it exists.
+            // A fresh installation has no demonstration data or default tenant.
+            var workspaceId = existingId;
+            if (workspaceId is null)
+            {
+                var workspace = new Workspace();
+                db.Workspaces.Add(workspace);
+                await db.SaveChangesAsync();
+                workspaceId = workspace.Id;
+            }
             var user = new ApplicationUser { UserName = email, Email = email, ActiveWorkspaceId = workspaceId };
             var result = await users.CreateAsync(user, password);
             if (!result.Succeeded)
                 return Results.BadRequest(string.Join("; ", result.Errors.Select(e => e.Description)));
             accounts.Memberships.Add(new WorkspaceMembership
-                { UserId = user.Id, WorkspaceId = workspaceId, Role = "Owner" });
+                { UserId = user.Id, WorkspaceId = workspaceId.Value, Role = "Owner" });
             await accounts.SaveChangesAsync();
             await signIn.SignInAsync(user, isPersistent: false);
             return Results.Redirect("/");
