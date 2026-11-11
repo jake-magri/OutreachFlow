@@ -25,6 +25,14 @@ jobs:
         run: dotnet build OutreachFlow.slnx --no-restore --configuration Release
       - name: Smoke tests
         run: dotnet run --project OutreachFlow.SmokeTests/OutreachFlow.SmokeTests.csproj --configuration Release --no-build
+      - name: Install isolated Chromium (PR #6 only)
+        if: github.head_ref == 'feature/browser-render-research-pilot' || github.ref == 'refs/heads/feature/browser-render-research-pilot'
+        run: pwsh OutreachFlow/bin/Release/net10.0/playwright.ps1 install --with-deps chromium
+      - name: Test experimental JavaScript rendering with an offline fixture (PR #6 only)
+        if: github.head_ref == 'feature/browser-render-research-pilot' || github.ref == 'refs/heads/feature/browser-render-research-pilot'
+        env:
+          OUTREACHFLOW_BROWSER_TESTS: '1'
+        run: dotnet run --project OutreachFlow.SmokeTests/OutreachFlow.SmokeTests.csproj --configuration Release --no-build
       - name: Launch local site and verify protected routes
         shell: bash
         run: |
