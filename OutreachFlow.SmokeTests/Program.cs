@@ -95,6 +95,40 @@ try
         await flow.GenerateDraftAsync(Id(company));
         await flow.SimulateInitialSendAsync(Id(company));
     }
+    // Pilot real-world workflow: actual send/reply is owner-entered, never transmitted by the app.
+    await flow.ImportAsync("Real Pilot Co | HQ | https://pilot.example | vendor@pilot.example");
+    var realId = (await flow.ListProspectsAsync()).Single(p => p.CompanyName == "Real Pilot Co").Id;
+    await flow.RecordResearchAsync(realId, ResearchOutcome.NoProcessFound,
+        "", "", "Owner checked official vendor pages; no application route found.", false);
+    await flow.GenerateDraftAsync(realId);
+    await flow.RecordExternalInitialSendAsync(realId);
+    var realLogged = (await flow.GetDetailsAsync(realId))!;
+    Check(realLogged.Prospect.Status == ProspectStatus.AwaitingReply &&
+          realLogged.Prospect.AutomationPaused && realLogged.Prospect.NextActionDate.HasValue &&
+          realLogged.Messages.Count(m => !m.IsSimulation && m.Direction == "Outbound") == 1,
+          "owner-confirmed external send records actual outreach and a manual follow-up date");
+    await MustReject(() => flow.RecordExternalInitialSendAsync(realId),
+        "cannot log the same initial send twice");
+    await MustReject(() => flow.SimulateFollowupAsync(realId),
+        "real-world manual workflow cannot trigger simulated followups");
+    await flow.RecordExternalReplyAsync(realId, "We would be happy to discuss a call.", ReplyCategory.Interested);
+    var realReply = (await flow.GetDetailsAsync(realId))!;
+    Check(realReply.Prospect.Status == ProspectStatus.WarmLead &&
+          realReply.Prospect.NextStepDueUtc is null &&
+          realReply.Messages.Any(m => !m.IsSimulation && m.Direction == "Inbound"),
+          "owner-entered actual interested reply creates warm lead and stops automation");
+    await flow.ImportAsync("Real OptOut Co | HQ | https://optout.example | vendor@optout.example");
+    var optId = (await flow.ListProspectsAsync()).Single(p => p.CompanyName == "Real OptOut Co").Id;
+    await flow.RecordResearchAsync(optId, ResearchOutcome.NoProcessFound,
+        "", "", "Owner checked official site and found no application route.", false);
+    await flow.GenerateDraftAsync(optId);
+    await flow.RecordExternalInitialSendAsync(optId);
+    await flow.RecordExternalReplyAsync(optId, "Please do not email again.", ReplyCategory.Declined);
+    Check((await flow.GetDetailsAsync(optId))!.Prospect.Status == ProspectStatus.Suppressed,
+        "actual opt-out suppresses further outreach");
+    await MustReject(() => flow.RecordExternalReplyAsync(optId, "Repeat", ReplyCategory.Unclear),
+        "suppressed actual recipient cannot be reactivated from reply logging");
+
     var fleet = (await flow.GetDetailsAsync(Id("Fleet Co")))!.Prospect;
     Check(fleet.Attempts == 1 && fleet.NextStepDueUtc.HasValue && fleet.PlannedFollowups == 2,
         "dry-run initial email snapshots policy and schedules preview");
