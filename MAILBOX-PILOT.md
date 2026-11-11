@@ -24,8 +24,8 @@ The current inbound matching strategy compares the From address with a prospect'
    dotnet user-secrets set "Gmail:RedirectUri" "https://localhost:7117/mailbox/google/callback" --project OutreachFlow
    dotnet run --project OutreachFlow
    ```
-6. **One-time existing-account link:** sign in with the ORIGINAL local password, visit **Switch business / Workspaces**, then select **Link Google sign-in** and choose your authorized Google account. This explicitly links the stable Google account ID to your pre-existing local user/workspaces. It does not merge accounts by email.
-7. Sign out, then on the local login page select **Continue with Google**. A Google identity that has NOT been explicitly linked is rejected; public Google-based registration is not included in this localhost-only prototype.
+6. **Choose an onboarding path:** for an existing local OutreachFlow account, first sign in with its password and visit **Switch business / Workspaces → Link Google sign-in** so its data remains attached. For a new user, click **Continue with Google** on the login page to create a separate account and a brand-new private workspace. Google must provide a verified email; an email already used by a local account cannot be silently merged.
+7. Sign out, then use **Continue with Google** for subsequent logins. Existing local passwords continue working; a new Google-only account has no local password set.
 8. Open **Settings**, set the workspace **Sender email** to the Gmail/Workspace address you intend to authorize, and save. Google sign-in itself does NOT grant Gmail access.
 9. Open **Mailbox** in the sidebar, click **Connect Gmail (read only)**, choose the corresponding Google account, and explicitly approve the additional Gmail permission. OAuth uses a short-lived signed state cookie, PKCE S256 and a server-side client secret; authorization tokens are never printed to the UI.
 10. Return to Mailbox. Connection is active only for the currently selected workspace. Click **Review matching inbox replies**; the app searches no more than 20 inbox messages from the previous 30 days and only shows replies matching a prospect with owner-recorded real outbound history.
@@ -35,12 +35,12 @@ The current inbound matching strategy compares the From address with a prospect'
 
 ## Google sign-in vs Gmail authorization
 
-- **Continue with Google** requests only basic account identity scopes (`openid`, `email`, `profile`). It logs an existing linked OutreachFlow user in, preserving local workspace memberships and permissions.
+- **Continue with Google** requests only basic account identity scopes (`openid`, `email`, `profile`). It signs in an existing linked user or registers a first-time, Google-verified identity with a fresh private business workspace and Owner membership.
 - **Connect Gmail (read only)** is a different, optional OAuth request. Google consent is required separately because Gmail access is substantially more sensitive than basic authentication. Merely signing into OutreachFlow never grants inbox access.
 - The SAME Google Cloud OAuth 2.0 Web client ID/secret may be used for both flows; the two distinct HTTPS callbacks must both be registered in Google Cloud Console. The existing `Gmail:ClientId` and `Gmail:ClientSecret` settings are reused for sign-in unless `GoogleAuth:ClientId` and `GoogleAuth:ClientSecret` are explicitly configured separately.
-- This PR does not auto-create accounts on first Google login or match a Google identity to a local user merely because the email strings match. First establish a local account, link the stable Google subject while authenticated, then use Google sign-in thereafter. Unlinked accounts are refused rather than inadvertently gaining access to business data.
-- Local password sign-in remains enabled as a fallback throughout the pilot. Google sign-in does not change the identity/workspace database schema or migrate existing users.
-- Production onboarding, Google-only registration, separate support for organizations using Microsoft 365, and account-recovery policies require an explicit later design/review.
+- New Google subjects may create their own isolated account and workspace (no automatic access to existing business data). Existing local users must explicitly link Google while authenticated; an email match is never sufficient for linking. Google identities without a verified email are rejected.
+- Local password sign-in remains enabled for existing users; a newly registered Google-only identity has no local password. Google sign-in does not change the identity/workspace database schema or migrate existing users.
+- Production-ready self-service signup, account recovery, abuse controls, invitation-based team membership, and Microsoft 365 support require additional security/product review. This registration prototype is still restricted to localhost Development mode.
 
 ## Data handling
 
