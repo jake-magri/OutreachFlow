@@ -67,6 +67,12 @@ internal static class GmailPayloadTests
             Check((await gmail.ReviewInboxAsync(workspaceId, factory)).Single().Body == "",
                 "invalid UTF-8 is not silently replaced and imported");
 
+            foreach (var mode in new[] { ResponseMode.TooManyParts, ResponseMode.DeepMime, ResponseMode.EncodedBodyTooLarge })
+            {
+                transport.Mode = mode;
+                Check((await gmail.ReviewInboxAsync(workspaceId, factory)).Single().Body == "",
+                    mode + " cannot bypass MIME parsing limits");
+            }
             transport.Mode = ResponseMode.HeaderOversize;
             await RejectAsync(() => gmail.ReviewInboxAsync(workspaceId, factory),
                 "oversized Content-Length is rejected");
@@ -128,7 +134,7 @@ internal static class GmailPayloadTests
     private enum ResponseMode
     {
         Valid, InvalidHeader, WrongReference, BadBase64, InvalidUtf8, HeaderOversize,
-        StreamOversize, DeepJson, MalformedJson
+        StreamOversize, DeepJson, MalformedJson, TooManyParts, DeepMime, EncodedBodyTooLarge
     }
 
     private sealed class FakeTransport : IHttpClientFactory
@@ -164,6 +170,7 @@ internal static class GmailPayloadTests
             {
                 ResponseMode.BadBase64 => new { data = "invalid++base64!" },
                 ResponseMode.InvalidUtf8 => new { data = GmailMailboxService.Base64Url(new byte[] { 0xFF, 0xFE }) },
+                ResponseMode.EncodedBodyTooLarge => new { data = new string('A', 90001) },
                 _ => new { data = GmailMailboxService.Base64Url(Encoding.UTF8.GetBytes("Genuine fixture text")) }
             };
             object[] headers =
@@ -175,12 +182,29 @@ internal static class GmailPayloadTests
                 new { name = "In-Reply-To", value = (object)(owner.Mode == ResponseMode.WrongReference
                     ? "<not-our-message@example.org>" : "<fixture-outbound@example.org>") }
             ];
+            object payload = owner.Mode switch
+            {
+                ResponseMode.TooManyParts => new {
+                    headers, mimeType = "multipart/mixed",
+                    parts = Enumerable.Range(0, 21).Select(_ => new {
+                        mimeType = "text/plain", body
+                    }).ToArray()
+                },
+                ResponseMode.DeepMime => NestedPart(8, headers, body),
+                _ => new { headers, mimeType = "text/plain", body }
+            };
             return Task.FromResult(Response(new {
                 id = "inbound-fixture", threadId = "thread-fixture", labelIds = new[] { "INBOX" },
                 internalDate = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString(),
-                payload = new { headers, mimeType = "text/plain", body }
+                payload
             }));
         }
+
+        private static object NestedPart(int depth, object[] headers, object body) =>
+            depth == 0
+                ? new { headers, mimeType = "text/plain", body }
+                : (object)new { headers, mimeType = "multipart/mixed",
+                    parts = new[] { NestedPart(depth - 1, headers, body) } };
 
         private static HttpResponseMessage Response(object obj) => Raw(JsonSerializer.Serialize(obj));
         private static HttpResponseMessage Raw(string json) => new(HttpStatusCode.OK) {
