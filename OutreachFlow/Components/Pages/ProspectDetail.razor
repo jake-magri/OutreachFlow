@@ -86,7 +86,9 @@ else
             <p><strong>Research:</strong> @p.ResearchOutcome</p>
             @if (p.Status == ProspectStatus.ApplicationTask)
             {
-                <div class="notice">An application route was found or supplied in a reply. Complete the official process manually; do not send a generic inquiry.</div>
+                <div class="notice">@((p.ResearchOutcome == ResearchOutcome.NotReviewed || p.ResearchOutcome == ResearchOutcome.ReviewNeeded)
+                    ? "Application review queue: the indexed result is unverified. Confirm the organization's official process and applicability before submitting anything."
+                    : "An application route was recorded or supplied in a reply. Complete the official process manually; do not send a generic inquiry.")</div>
             }
             @if (p.Status == ProspectStatus.ReadyToInquire && !p.AutomationPaused)
             {
