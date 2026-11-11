@@ -186,7 +186,7 @@ public static class LocalRecoveryBundle
             throw new InvalidOperationException("Both SQLite database backups are required.");
         // Reject unmanifested payloads, even if a manifest's own checksums match.
         var actual = Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories)
-            .Select(f => Path.GetRelativePath(root, f))
+            .Select(f => Path.GetRelativePath(root, f).Replace('\\', '/'))
             .Where(f => f != "manifest.json").ToHashSet(StringComparer.OrdinalIgnoreCase);
         if (!actual.SetEquals(seen))
             throw new InvalidOperationException("Recovery bundle contains unlisted files.");
