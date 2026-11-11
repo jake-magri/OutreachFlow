@@ -35,9 +35,9 @@ Check(GmailMailboxService.IsAllowedRedirectUri("https://localhost:7117/mailbox/g
       !GmailMailboxService.IsAllowedRedirectUri("https://localhost:7117/mailbox/google/callback?next=evil"),
     "Gmail OAuth redirect is limited to exact HTTPS loopback callback");
 var verifier = GmailMailboxService.NewVerifier();
-var challenge = GmailMailboxService.Challenge(verifier);
-Check(verifier.Length is >= 43 and <= 128 && challenge.Length == 43 &&
-      challenge != verifier && verifier != GmailMailboxService.NewVerifier(),
+var pkceChallenge = GmailMailboxService.Challenge(verifier);
+Check(verifier.Length is >= 43 and <= 128 && pkceChallenge.Length == 43 &&
+      pkceChallenge != verifier && verifier != GmailMailboxService.NewVerifier(),
     "Google PKCE uses a unique random verifier and SHA-256 challenge");
 
 var mailboxFixture = Path.Combine(Path.GetTempPath(), "outreachflow-gmail-" + Guid.NewGuid().ToString("N"));
