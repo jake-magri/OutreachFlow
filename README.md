@@ -52,6 +52,10 @@ To test this research change after CI passes, use `git fetch origin` and `git sw
 
 **Do not deploy this prototype publicly.** It fails closed outside Development and blocks non-loopback requests. The app performs only on-demand read-only website checks when explicitly requested. The existing sending controls are simulations. Do not enter real mail provider secrets until a reviewed connection is implemented.
 
+## Workspace contact defaults
+
+New workspace model instances no longer contain any specific person's email address, phone number, or business identity. Set the correct sender, service, location and outreach templates for each workspace in **Settings** before using it. Existing records in local SQLite are unaffected by changes to C# model defaults. No data reset or EF migration is required.
+
 ## Local storage
 
 `outreachflow.db` stores workspaces, prospects, research evidence, simulated messages and activities. `outreachflow.auth.db` separately holds ASP.NET Core Identity users and workspace memberships. Both are relative SQLite paths created where the app runs. Both databases currently use EF Core `EnsureCreated()`, not production migrations.
