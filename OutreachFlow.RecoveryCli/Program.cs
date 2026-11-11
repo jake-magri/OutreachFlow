@@ -51,10 +51,16 @@ try
             break;
         case "baseline" when args.Length == 3 &&
             args[1].Equals("inspect", StringComparison.OrdinalIgnoreCase):
-            foreach (var state in LegacyMigrationBaseline.Inspect(args[2]))
+            var inspected = LegacyMigrationBaseline.Inspect(args[2]);
+            foreach (var state in inspected)
             {
                 Console.WriteLine($"{state.File}: compatible={state.SchemaMatches}, adopted={state.AlreadyAdopted}, migration={state.MigrationId}");
                 Console.WriteLine("  " + state.Detail);
+            }
+            if (inspected.Any(x => !x.SchemaMatches))
+            {
+                Console.Error.WriteLine("Schema mismatch. Baseline adoption is blocked.");
+                Environment.ExitCode = 1;
             }
             break;
         case "baseline" when args.Length == 5 &&
