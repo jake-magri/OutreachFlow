@@ -45,11 +45,29 @@ Check(!BrowserResearchPolicy.AllowMediaType("application/octet-stream") &&
 var renderableShell = new ResearchPageDiagnostic(browserRoot.AbsoluteUri,
     "Supplier registration", 40, Array.Empty<string>(),
     "The returned HTML has very little readable text (possibly a JavaScript-only shell).");
-var blockedPage = renderableShell with { Warning =
-    "The returned HTML resembles a block/challenge page, not reliable business content." };
+var blockedPage = ResearchPageInspector.Inspect(
+    new Uri("https://www.example.org/supplier-registration"),
+    "<html><head><title>Just a moment...</title></head>" +
+    "<body>Please wait while we check your browser.</body></html>",
+    ResearchProfileCatalog.Default());
+var introBlocked = ResearchPageInspector.Inspect(
+    new Uri("https://www.example.org/supplier-registration"),
+    "<html><head><title>Supplier registration</title></head>" +
+    "<body>Verify you are human to proceed.</body></html>",
+    ResearchProfileCatalog.Default());
 Check(BrowserResearchPolicy.MayRender(renderableShell) &&
-    !BrowserResearchPolicy.MayRender(blockedPage),
+    !BrowserResearchPolicy.MayRender(blockedPage) &&
+    !BrowserResearchPolicy.MayRender(introBlocked),
     "browser experiment attempts JavaScript shells but never retries site access challenges");
+Check(blockedPage.InitialRuleId == "challenge-title" &&
+      blockedPage.MatchedPhrase == "just a moment" &&
+      introBlocked.InitialRuleId == "challenge-intro" &&
+      introBlocked.MatchedPhrase == "verify you are human",
+    "challenge diagnostics specify whether title or body rule matched and its allowlisted phrase");
+Check(blockedPage.HttpStatusCode == 200 &&
+      !blockedPage.MatchedPhrase.Contains("<") &&
+      !introBlocked.MatchedPhrase.Contains("<"),
+    "challenge metadata uses explicit status and sanitized allowlisted rule matches");
 
 // The opt-in browser integration test runs only when Chromium is installed and explicitly enabled.
 if (Environment.GetEnvironmentVariable("OUTREACHFLOW_BROWSER_TESTS") == "1")
@@ -132,8 +150,10 @@ Check(shell.IsInconclusive && shell.VisibleCharacters < 120,
 var challenge = ResearchPageInspector.Inspect(suspectUri,
     "<html><title>Just a moment...</title><body>Checking your browser before accessing the site. Verify you are human.</body></html>",
     generalResearch);
-Check(challenge.IsInconclusive && challenge.Warning.Contains("challenge", StringComparison.OrdinalIgnoreCase),
-    "HTTP 200 challenge page is classified as incomplete");
+Check(challenge.IsInconclusive && challenge.IsChallenge &&
+      challenge.InitialRuleId == "challenge-title" &&
+      challenge.MatchedPhrase == "just a moment",
+    "HTTP 200 challenge page identifies its exact triggering title rule");
 var realPage = ResearchPageInspector.Inspect(suspectUri,
     "<html><head><title>Supplier Registration</title></head><body><main><h1>Supplier registration</h1>" +
     "<p>Vendors interested in doing business should complete the supplier registration process.</p>" +
