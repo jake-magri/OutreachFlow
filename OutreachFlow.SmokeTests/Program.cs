@@ -62,20 +62,36 @@ try
         ResearchUrlPolicy.ParseWebsite("http://localhost/");
         return Task.CompletedTask;
     }, "research rejects localhost websites");
+    var contacts = PublicContactExtractor.Extract(
+        "<html><body>Contact procurement@public.example and <a href='mailto:vendors@public.example'>Email team</a>" +
+        "<script>var secret='hidden@public.example';</script><style>.a{content:'style@public.example'}</style>" +
+        "no-reply@public.example</body></html>", new Uri("https://public.example/contact"));
+    Check(contacts.Select(c => c.Address).Order().SequenceEqual(
+        new[] { "procurement@public.example", "vendors@public.example" }.Order()),
+        "public HTML contact extraction includes mailto and visible addresses, excludes scripts and no-reply");
     var researchFlow = new OutreachService(factory, new DryRunEmail(), new FixedWorkspaceAccess(1), new FakeResearcher());
     await researchFlow.ImportAsync("Website Research Co | South | https://www.example.org | vendor@example.org");
     var researchId = (await researchFlow.ListProspectsAsync()).Single(p => p.CompanyName == "Website Research Co").Id;
     var scan = await researchFlow.ResearchCompanyAsync(researchId);
     var researched = (await researchFlow.GetDetailsAsync(researchId))!;
-    Check(scan.Candidates.Count == 2 && researched.Evidence.Count == 3 &&
+    Check(scan.Candidates.Count == 2 && researched.Evidence.Count == 4 &&
           researched.Prospect.Status == ProspectStatus.NeedsAction &&
           researched.Evidence.All(e => !e.IsOfficial),
           "research sources persist as unverified candidates requiring human review");
     await MustReject(() => researchFlow.GenerateDraftAsync(researchId),
         "unreviewed research cannot generate an inquiry draft");
     await researchFlow.ResearchCompanyAsync(researchId);
-    Check((await researchFlow.GetDetailsAsync(researchId))!.Evidence.Count == 3,
+    Check((await researchFlow.GetDetailsAsync(researchId))!.Evidence.Count == 4,
         "repeated website scan does not duplicate the same evidence");
+    var contactEvidence = (await researchFlow.GetDetailsAsync(researchId))!.Evidence
+        .Single(e => e.SourceTitle == "Email candidate: procurement@example.org");
+    await researchFlow.ApproveResearchContactAsync(researchId, contactEvidence.Id);
+    Check((await researchFlow.GetDetailsAsync(researchId))!.Prospect.ContactEmail == "procurement@example.org",
+        "owner approves an evidence-backed recipient without automatically approving a vendor process");
+    var arbitraryEvidence = (await researchFlow.GetDetailsAsync(researchId))!.Evidence
+        .First(e => e.SourceTitle == "Research scan: page checked");
+    await MustReject(() => researchFlow.ApproveResearchContactAsync(researchId, arbitraryEvidence.Id),
+        "non-email research evidence cannot be used to change the recipient");
     await researchFlow.RecordResearchAsync(researchId, ResearchOutcome.ApplicationPortal,
         "https://www.example.org/vendors", "Verified supplier instructions",
         "Owner reviewed the source and confirmed portal applicability.", true);
@@ -183,5 +199,9 @@ sealed class FakeResearcher : ICompanyResearcher
                 new ResearchCandidate("Link: Procurement", "https://www.example.org/procurement", "Unverified procurement page")
             },
             new[] { "https://www.example.org/" },
-            "Only public HTML pages were inspected."));
+            "Only public HTML pages were inspected.")
+        {
+            Contacts = [new ResearchContact("procurement@example.org", "https://www.example.org/contact",
+                "Publicly listed vendor email; verify ownership and relevance.")]
+        });
 }
