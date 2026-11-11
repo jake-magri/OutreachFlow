@@ -752,6 +752,14 @@ try
         "official portal creates manual application task");
     await MustReject(() => flow.GenerateDraftAsync(Id("Portal Co")),
         "official portal blocks generic email draft");
+    await flow.RecordResearchAsync(Id("Portal Co"), ResearchOutcome.NotEligible,
+        "", "", "Not eligible after owner review", false);
+    await MustReject(() => flow.RecordResearchAsync(Id("Portal Co"),
+        ResearchOutcome.NoProcessFound, "", "", "Attempted reopening", false),
+        "closed prospect cannot be silently reopened by editing research");
+    await MustReject(() => flow.RecordManualActivityAsync(Id("Portal Co"),
+        "Phone call", "Attempted contact", "Call again", null),
+        "closed prospect cannot receive a new outbound follow-up task");
 
     foreach (var company in new[] { "Fleet Co", "NoReply Co", "OptOut Co", "=Formula Co" })
     {
@@ -775,6 +783,9 @@ try
         "cannot log the same initial send twice");
     await MustReject(() => flow.SimulateFollowupAsync(realId),
         "real-world manual workflow cannot trigger simulated followups");
+    await MustReject(() => flow.SimulateReplyAsync(realId,
+        "Fake reply on actual contact", ReplyCategory.Interested),
+        "simulated replies cannot modify real outbound conversations");
     await flow.RecordExternalReplyAsync(realId, "We would be happy to discuss a call.", ReplyCategory.Interested);
     var realReply = (await flow.GetDetailsAsync(realId))!;
     Check(realReply.Prospect.Status == ProspectStatus.WarmLead &&
@@ -821,6 +832,15 @@ try
         "manual owner takeover pauses simulation and persists next action");
     await MustReject(() => flow.SimulateFollowupAsync(Id("NoReply Co")),
         "manual owner takeover blocks follow-up");
+    await flow.CloseAsync(Id("NoReply Co"));
+    await MustReject(() => flow.SimulateReplyAsync(Id("NoReply Co"),
+        "Attempted reopening of closed record", ReplyCategory.Interested),
+        "closed prospect cannot be reopened by simulated reply");
+    await MustReject(() => flow.RecordManualActivityAsync(Id("NoReply Co"),
+        "Manual email", "Attempted contact", "Contact again", null),
+        "closed prospect refuses new contact tasks");
+    await flow.RecordManualActivityAsync(Id("NoReply Co"),
+        "Internal note", "Archived after manual takeover.", "", null);
 
     await flow.SimulateReplyAsync(Id("OptOut Co"), "Please remove this address.", ReplyCategory.Declined);
     var status = (await flow.GetDetailsAsync(Id("OptOut Co")))!.Prospect.Status;
