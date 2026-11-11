@@ -75,28 +75,6 @@ try
             "Unconfigured provider search must be disabled.");
     });
 
-    await Scenario("single-input batch pipeline, simulation and repeat suppression", async () => {
-        await page.GotoAsync(url + "/prospects");
-        const string batchEntry = "Batch Browser Fixture | South Charlotte | https://example.org | batch-fixture@example.org";
-        await page.Locator("#batch-input").FillAsync(batchEntry);
-        await page.GetByRole(AriaRole.Button, new() { Name = "Run batch pipeline" }).ClickAsync();
-        await Visible(page.GetByText("Batch Browser Fixture — Simulated", new() { Exact = false }));
-        await Check(await page.Locator("a.list-row").Filter(new() { HasText = "Batch Browser Fixture" }).CountAsync() == 1,
-            "Batch pipeline must create exactly one prospect.");
-        await page.Locator("a.list-row").Filter(new() { HasText = "Batch Browser Fixture" }).ClickAsync();
-        await Visible(page.GetByRole(AriaRole.Heading, new() { Name = "Batch Browser Fixture" }));
-        await Visible(page.GetByText("SIMULATED OUTBOUND", new() { Exact = false }));
-        await page.GotoAsync(url + "/prospects");
-        await page.Locator("#batch-input").FillAsync(batchEntry);
-        await page.GetByRole(AriaRole.Button, new() { Name = "Run batch pipeline" }).ClickAsync();
-        await Visible(page.GetByText("Skipped: already recorded company/site or recipient", new() { Exact = false }));
-        await Check(await page.Locator("a.list-row").Filter(new() { HasText = "Batch Browser Fixture" }).CountAsync() == 1,
-            "Replaying the batch must never create a second prospect.");
-        await page.Locator("#batch-mode").SelectOptionAsync("Gmail");
-        await Check(await page.GetByRole(AriaRole.Button, new() { Name = "Run batch pipeline" }).IsDisabledAsync(),
-            "Live Gmail batch must require explicit owner approval.");
-    });
-
     await Scenario("single-input batch simulation and duplicate-safe replay", async () => {
         await page.GotoAsync(url + "/prospects");
         var batch = page.GetByTestId("batch-inquiries");
