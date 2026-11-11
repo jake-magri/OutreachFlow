@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="OutreachFlow/OutreachFlow.csproj" />
+  <Project Path="OutreachFlow.SmokeTests/OutreachFlow.SmokeTests.csproj" />
+</Solution>

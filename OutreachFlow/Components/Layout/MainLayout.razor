@@ -1,0 +1,16 @@
+@inherits LayoutComponentBase
+<div class="shell">
+    <aside class="sidebar">
+        <a href="/" class="brand"><span class="brand-mark">O</span><span>OutreachFlow<small>LOCAL PROTOTYPE</small></span></a>
+        <nav aria-label="Main navigation">
+            <NavLink href="/" Match="NavLinkMatch.All">Dashboard</NavLink>
+            <NavLink href="/prospects">Prospects</NavLink>
+            <NavLink href="/settings">Settings</NavLink>
+        </nav>
+        <div class="sidebar-footer">Research first · Email only<br />Dry-run mode</div>
+    </aside>
+    <main class="main">
+        <div class="topbar"><span>Lead research and outreach</span><span class="dryrun">● Live sending OFF</span></div>
+        <div class="content">@Body</div>
+    </main>
+</div>

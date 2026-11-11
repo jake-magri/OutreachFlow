@@ -1,0 +1,254 @@
+@page "/prospects/{Id:int}"
+@inject OutreachService Flow
+<PageTitle>Prospect · OutreachFlow</PageTitle>
+@if (details is null)
+{
+    <p>Loading or prospect not found. <a href="/prospects">Back to prospects</a>.</p>
+}
+else
+{
+    var p = details.Prospect;
+    <section class="page-header"><div><a href="/prospects" class="subtle">← Prospects</a><h1>@p.CompanyName</h1><p>@p.SiteName · <span class="status">@p.Status</span> · @p.Attempts simulated outreach attempts</p></div></section>
+    @if (!string.IsNullOrEmpty(alert)) { <div class="notice">@alert</div> }
+    <div class="panel-grid">
+        <section class="panel spaced">
+            <div class="panel-heading"><h2>1 · Official-process research</h2><small>Required first</small></div>
+            <p>Check the company's official vendor portal or written supplier instructions before deciding whether to inquire. OutreachFlow can inspect a small number of public HTML pages on the submitted company website. It cannot verify whether a linked portal accepts fleet-washing suppliers. Review all results before saving an outcome.</p>
+            <div class="scan-box">
+                <p><strong>Company website:</strong> @p.Website</p>
+                <button class="button" @onclick="ScanWebsite" disabled="@scanning">@(scanning ? "Checking public site…" : "Research company website")</button>
+                <small>Read-only · max 6 same-site HTML pages · no logins, forms, PDFs or external portals · no email</small>
+                @if (!string.IsNullOrWhiteSpace(scanSummary))
+                {
+                    <div class="notice">@scanSummary</div>
+                }
+                <p class="help">Auto-discovered references are unverified. Select a result below to copy it into the review form, verify the company and process yourself, then explicitly approve an outcome.</p>
+            </div>
+            <div class="field"><label>Research result</label><select @bind="researchOutcome">
+                <option value="NotReviewed">Not reviewed</option>
+                <option value="ApplicationPortal">Official application/portal found</option>
+                <option value="EmailInstructions">Email application instructions</option>
+                <option value="NoProcessFound">Process not found in checked sources</option>
+                <option value="ReviewNeeded">Needs verification</option>
+                <option value="NotEligible">Not eligible / closed</option>
+            </select></div>
+            <div class="field"><label>Evidence or process URL</label><input @bind="researchUrl" placeholder="https://..." /></div>
+            <div class="field"><label>Page or document title</label><input @bind="researchTitle" placeholder="Supplier registration" /></div>
+            <div class="field"><label>What the page says / sources checked</label><textarea @bind="researchNote" class="textarea" rows="3"></textarea></div>
+            <label class="checkbox"><input type="checkbox" @bind="researchOfficial" /> Confirmed official company source</label>
+            <button class="button primary" @onclick="SaveResearch">Save research finding</button>
+            @if (!string.IsNullOrWhiteSpace(p.ProcessUrl))
+            {
+                <p><strong>Recorded process:</strong> <a href="@p.ProcessUrl" target="_blank" rel="noopener noreferrer">Open evidence</a></p>
+            }
+            @foreach (var e in details.Evidence)
+            {
+                <div class="evidence">
+                    <small>@e.CheckedUtc.ToLocalTime().ToString("g") · @(e.IsOfficial ? "Owner verified" : "Unverified reference")</small>
+                    <strong>@e.SourceTitle</strong>
+                    @if (!string.IsNullOrWhiteSpace(e.SourceUrl))
+                    {
+                        <a href="@e.SourceUrl" target="_blank" rel="noopener noreferrer">View source</a>
+                    }
+                    <p>@e.ExcerptOrObservation</p>
+                    @if (!e.IsOfficial && e.SourceTitle != "Research scan: page checked")
+                    {
+                        <button class="button" @onclick="() => UseCandidate(e)">Copy into review form</button>
+                    }
+                </div>
+            }
+        </section>
+        <section class="panel spaced">
+            <div class="panel-heading"><h2>2 · Draft and dry-run sequence</h2><small>Never sends real mail</small></div>
+            <p><strong>Email:</strong> @p.ContactEmail</p>
+            <p><strong>Research:</strong> @p.ResearchOutcome</p>
+            @if (p.Status == ProspectStatus.ApplicationTask)
+            {
+                <div class="notice">An application route was found or supplied in a reply. Complete the official process manually; do not send a generic inquiry.</div>
+            }
+            @if (p.Status == ProspectStatus.ReadyToInquire && !p.AutomationPaused)
+            {
+                <button class="button primary" @onclick="Draft">Generate inquiry draft</button>
+            }
+            @if (!string.IsNullOrWhiteSpace(p.DraftBody))
+            {
+                <div class="field"><label>Subject</label><input value="@p.DraftSubject" readonly /></div>
+                <div class="field"><label>Body (review before future live sending)</label><textarea class="textarea" rows="9" readonly>@p.DraftBody</textarea></div>
+            }
+            @if (p.Status == ProspectStatus.DraftReady && !p.AutomationPaused)
+            {
+                <button class="button primary" @onclick="SendInitial">Simulate initial email</button>
+            }
+            @if (p.Status == ProspectStatus.AwaitingReply && !p.AutomationPaused)
+            {
+                @if (p.NextStepDueUtc is DateTime due)
+                {
+                    <div class="notice">Scheduled preview: next step would be due @due.ToString("yyyy-MM-dd HH:mm") UTC.
+                        These simulation controls deliberately bypass the clock; there is no automatic sender.</div>
+                }
+                <div class="actions"><button class="button" @onclick="Followup">Simulate next follow-up</button><button class="button" @onclick="Finish">Simulate no-response handoff</button></div>
+                <small>Buttons enforce the configured follow-up limit; they do not run on a timer yet.</small>
+            }
+            @if (p.Attempts > 0 && p.Status != ProspectStatus.Suppressed)
+            {
+                <hr />
+                <h3>3 · Ingest a test reply</h3>
+                <div class="field"><label>Reply category</label><select @bind="replyCategory">
+                    <option value="Interested">Interested / open to call</option>
+                    <option value="ApplicationInstructions">Portal or application instructions</option>
+                    <option value="HasQuestion">Needs answer</option>
+                    <option value="Declined">Declined / opt out</option>
+                    <option value="OutOfOffice">Out-of-office</option>
+                    <option value="Unclear">Needs manual review</option>
+                </select></div>
+                <div class="field"><label>Reply content</label><textarea @bind="replyText" rows="4" class="textarea" placeholder="Example: Yes, happy to talk. Call me Thursday."></textarea></div>
+                <button class="button" @onclick="Reply">Simulate incoming reply</button>
+            }
+        </section>
+    </div>
+    <section class="panel spaced">
+        <div class="panel-heading"><h2>Manual follow-up &amp; ownership</h2><small>Every action is recorded locally</small></div>
+        @if (p.AutomationPaused)
+        {
+            <div class="notice">Owner / reply takeover active. The simulated sequence cannot resume.</div>
+        }
+        @if (!string.IsNullOrWhiteSpace(p.NextAction))
+        {
+            <p><strong>Next action:</strong> @p.NextAction
+                @if (p.NextActionDate.HasValue) { <span> — @p.NextActionDate.Value.ToString("yyyy-MM-dd")</span> }</p>
+        }
+        <div class="form-grid">
+            <div class="field"><label>Manual activity</label><select @bind="manualKind">
+                <option>Internal note</option>
+                <option>Phone call</option>
+                <option>Manual email</option>
+                <option>Application submitted</option>
+                <option>Site visit</option>
+                <option>Other</option>
+            </select></div>
+            <div class="field"><label>Next-action date (optional)</label><input type="date" value="@nextDateIso" @onchange="OnNextDateChanged" /></div>
+        </div>
+        <div class="field"><label>Activity note</label><textarea @bind="manualNote" class="textarea" rows="3" placeholder="What happened, who responded, and any outstanding questions?"></textarea></div>
+        <div class="field"><label>Next action (optional)</label><input @bind="manualNextAction" placeholder="Call the vendor contact" /></div>
+        <div class="actions">
+            <button class="button primary" @onclick="SaveManual">Save manual activity</button>
+            @if (p.Status is not (ProspectStatus.Closed or ProspectStatus.Suppressed))
+            {
+                <button class="button" @onclick="Close">Close prospect</button>
+            }
+        </div>
+        <p class="help">Manual activity pauses simulated follow-ups permanently. Suppressed recipients accept only internal notes.</p>
+    </section>
+    <section class="panel spaced">
+        <div class="panel-heading"><h2>History &amp; human handoff</h2><small>Records retained across restarts</small></div>
+        @if (p.Status == ProspectStatus.WarmLead) { <div class="notice">Warm lead: human follow-up. A reply is not a confirmed appointment.</div> }
+        @if (p.Status == ProspectStatus.ManualNoResponse) { <div class="notice">No response: manual queue, not a warm lead.</div> }
+        @if (p.Status == ProspectStatus.Suppressed) { <div class="notice">Suppressed recipient. Do not contact automatically or move to manual outreach.</div> }
+        @foreach (var m in details.Messages)
+        {
+            <div class="timeline"><small>@m.OccurredUtc.ToLocalTime().ToString("g") · @m.Direction · @m.Classification · SIMULATED</small><strong>@m.Subject</strong><pre>@m.Body</pre></div>
+        }
+        @foreach (var a in details.Activity)
+        {
+            <div class="activity"><small>@a.OccurredUtc.ToLocalTime().ToString("g") · @a.Kind</small><span>@a.Detail</span></div>
+        }
+    </section>
+}
+@code {
+    [Parameter] public int Id { get; set; }
+    private ProspectDetails? details;
+    private string alert = "";
+    private ResearchOutcome researchOutcome = ResearchOutcome.NotReviewed;
+    private string researchUrl = "";
+    private string researchTitle = "";
+    private string researchNote = "";
+    private bool researchOfficial;
+    private bool scanning;
+    private string scanSummary = "";
+    private ReplyCategory replyCategory = ReplyCategory.Interested;
+    private string replyText = "";
+    private string manualKind = "Internal note";
+    private string manualNote = "";
+    private string manualNextAction = "";
+    private string nextDateIso = "";
+    protected override async Task OnParametersSetAsync()
+    {
+        await Reload();
+        if (details is not null)
+        {
+            researchOutcome = details.Prospect.ResearchOutcome;
+            researchUrl = details.Prospect.ProcessUrl;
+            researchNote = details.Prospect.ResearchNotes;
+            manualNextAction = details.Prospect.NextAction;
+            nextDateIso = details.Prospect.NextActionDate?.ToString("yyyy-MM-dd") ?? "";
+        }
+    }
+    private async Task Reload() => details = await Flow.GetDetailsAsync(Id);
+    private async Task Execute(Func<Task> action)
+    {
+        try { await action(); alert = "Saved. Local simulation only."; }
+        catch (Exception ex) { alert = ex.Message; }
+        await Reload();
+    }
+    private async Task ScanWebsite()
+    {
+        scanning = true;
+        alert = "";
+        scanSummary = "";
+        await InvokeAsync(StateHasChanged);
+        try
+        {
+            var scan = await Flow.ResearchCompanyAsync(Id);
+            scanSummary = $"Checked {scan.PagesChecked.Count} public HTML page(s) and collected {scan.Candidates.Count} candidate reference(s). {scan.Limitations}";
+            alert = "Website scan saved. Review each reference before confirming a research outcome.";
+        }
+        catch (Exception ex) { alert = "Research could not finish: " + ex.Message; }
+        finally
+        {
+            scanning = false;
+            await Reload();
+            if (details is not null && researchOutcome == ResearchOutcome.NotReviewed)
+                researchOutcome = details.Prospect.ResearchOutcome;
+        }
+    }
+    private void UseCandidate(ResearchEvidence e)
+    {
+        researchUrl = e.SourceUrl;
+        researchTitle = e.SourceTitle;
+        researchNote = e.ExcerptOrObservation;
+        researchOutcome = ResearchOutcome.ReviewNeeded;
+        researchOfficial = false;
+        alert = "Reference copied. Check the source and select the correct outcome; nothing is approved or sent yet.";
+    }
+    private Task SaveResearch() => Execute(() => Flow.RecordResearchAsync(Id, researchOutcome, researchUrl, researchTitle, researchNote, researchOfficial));
+    private Task Draft() => Execute(() => Flow.GenerateDraftAsync(Id));
+    private Task SendInitial() => Execute(() => Flow.SimulateInitialSendAsync(Id));
+    private Task Followup() => Execute(() => Flow.SimulateFollowupAsync(Id));
+    private Task Finish() => Execute(() => Flow.MarkNoResponseAsync(Id));
+    private Task Close() => Execute(() => Flow.CloseAsync(Id));
+    // Native date inputs return a string; avoid Razor date-bind type inference here.
+    private void OnNextDateChanged(ChangeEventArgs e)
+        => nextDateIso = e.Value?.ToString() ?? "";
+
+    private async Task SaveManual()
+    {
+        DateOnly? day = null;
+        if (!string.IsNullOrWhiteSpace(nextDateIso))
+        {
+            if (!DateOnly.TryParseExact(nextDateIso, "yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture,
+                System.Globalization.DateTimeStyles.None, out var parsed))
+            {
+                alert = "Enter a valid date (YYYY-MM-DD).";
+                return;
+            }
+            day = parsed;
+        }
+        await Execute(() => Flow.RecordManualActivityAsync(Id, manualKind, manualNote, manualNextAction, day));
+        if (alert.StartsWith("Saved")) manualNote = "";
+    }
+    private async Task Reply()
+    {
+        await Execute(() => Flow.SimulateReplyAsync(Id, replyText, replyCategory));
+        if (alert.StartsWith("Saved")) replyText = "";
+    }
+}

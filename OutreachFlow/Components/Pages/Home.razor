@@ -1,0 +1,60 @@
+@page "/"
+@inject OutreachService Flow
+<PageTitle>Dashboard · OutreachFlow</PageTitle>
+<section class="page-header">
+    <div><div class="eyebrow">YOUR WORKSPACE</div><h1>Outreach dashboard</h1><p>Four clear queues. Research before outreach. All messages are simulated.</p></div>
+    <a class="button primary" href="/prospects">Manage prospects</a>
+</section>
+@if (prospects is null)
+{
+    <p>Loading records…</p>
+}
+else
+{
+    <div class="stats">
+        <div class="stat"><span>Warm leads</span><strong>@prospects.Count(x => x.Status == ProspectStatus.WarmLead)</strong><small>Human follow-up</small></div>
+        <div class="stat"><span>Needs action</span><strong>@prospects.Count(x => x.Status is ProspectStatus.ApplicationTask or ProspectStatus.NeedsAction)</strong><small>Application / reply</small></div>
+        <div class="stat"><span>No response</span><strong>@prospects.Count(x => x.Status == ProspectStatus.ManualNoResponse)</strong><small>Manual queue only</small></div>
+        <div class="stat"><span>In research</span><strong>@prospects.Count(x => x.Status is ProspectStatus.ResearchNeeded or ProspectStatus.ReadyToInquire or ProspectStatus.DraftReady or ProspectStatus.AwaitingReply)</strong><small>Underway</small></div>
+    </div>
+    <section class="panel spaced">
+        <div class="panel-heading"><h2>Sequence scheduling preview</h2><small>No automatic sending</small></div>
+        @if (!prospects.Any(x => x.Status == ProspectStatus.AwaitingReply && !x.AutomationPaused && x.NextStepDueUtc.HasValue))
+        {
+            <p class="empty">No simulated sequence steps scheduled yet.</p>
+        }
+        @foreach (var p in prospects.Where(x => x.Status == ProspectStatus.AwaitingReply && !x.AutomationPaused && x.NextStepDueUtc.HasValue)
+            .OrderBy(x => x.NextStepDueUtc).Take(10))
+        {
+            <a class="list-row" href="@($"/prospects/{p.Id}")">
+                <span><strong>@p.CompanyName</strong><small>Next step @(p.NextStepDueUtc?.ToString("yyyy-MM-dd HH:mm") ?? "Not scheduled") UTC · @p.Attempts simulated attempt(s)</small></span>
+                <span class="status">@(p.NextStepDueUtc <= DateTime.UtcNow ? "Due preview" : "Upcoming")</span>
+            </a>
+        }
+    </section>
+    <div class="panel-grid">
+        @foreach (var (heading, hint, items) in Queues())
+        {
+            <section class="panel">
+                <div class="panel-heading"><h2>@heading</h2><small>@hint</small></div>
+                @if (items.Count == 0) { <div class="empty">Nothing in this queue yet.</div> }
+                @foreach (var p in items.Take(8))
+                {
+                    <a class="list-row" href="@($"/prospects/{p.Id}")"><span><strong>@p.CompanyName</strong><small>@p.SiteName @if (!string.IsNullOrWhiteSpace(p.NextAction)) { <span>· @p.NextAction</span> }</small></span><span class="status">@p.Status</span></a>
+                }
+            </section>
+        }
+    </div>
+}
+@code {
+    private List<Prospect>? prospects;
+    protected override async Task OnInitializedAsync() => prospects = await Flow.ListProspectsAsync();
+    private IEnumerable<(string title, string hint, List<Prospect> items)> Queues()
+    {
+        var p = prospects ?? new();
+        yield return ("Warm leads", "Interested / call invited", p.Where(x => x.Status == ProspectStatus.WarmLead).ToList());
+        yield return ("Needs action", "Instructions and questions", p.Where(x => x.Status is ProspectStatus.ApplicationTask or ProspectStatus.NeedsAction).ToList());
+        yield return ("Manual outreach — no response", "Unanswered is not interested", p.Where(x => x.Status == ProspectStatus.ManualNoResponse).ToList());
+        yield return ("Held / closed", "Declined or unsuitable", p.Where(x => x.Status is ProspectStatus.Closed or ProspectStatus.Suppressed).ToList());
+    }
+}

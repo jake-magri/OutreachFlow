@@ -1,0 +1,43 @@
+@page "/prospects"
+@inject OutreachService Flow
+<PageTitle>Prospects · OutreachFlow</PageTitle>
+<section class="page-header"><div><div class="eyebrow">PIPELINE</div><h1>Prospects</h1><p>Import a batch, research official vendor processes, then prepare inquiry drafts.</p></div></section>
+<section class="panel spaced">
+    <div class="panel-heading"><h2>Import prospects</h2><small>One prospect per line</small></div>
+    <p>Format: <code>Company | Site/branch | Website | Business email</code>. Existing company/site pairs are skipped.</p>
+    <textarea class="textarea" rows="4" placeholder="Example Delivery Group | South Charlotte | https://example.com | vendors@example.com" @bind="csv"></textarea>
+    <div class="actions"><button class="button primary" @onclick="Import" disabled="@busy">Import batch</button><span class="help">No emails are sent or websites fetched.</span></div>
+    @if (!string.IsNullOrEmpty(notice)) { <div class="notice">@notice</div> }
+</section>
+<section class="panel">
+    <div class="panel-heading"><h2>All prospects</h2>
+        <div class="actions"><small>@(prospects?.Count ?? 0) records</small><a class="button" href="/export/prospects.csv">Export CSV</a></div></div>
+    @if (prospects is null) { <p>Loading…</p> }
+    else
+    {
+        @foreach (var p in prospects)
+        {
+            <a class="list-row" href="@($"/prospects/{p.Id}")"><span><strong>@p.CompanyName</strong><small>@p.SiteName · @p.ContactEmail</small></span><span class="status">@p.Status</span></a>
+        }
+    }
+</section>
+@code {
+    private List<Prospect>? prospects;
+    private string csv = "";
+    private string notice = "";
+    private bool busy;
+    protected override async Task OnInitializedAsync() => prospects = await Flow.ListProspectsAsync();
+    private async Task Import()
+    {
+        busy = true;
+        try
+        {
+            var (added, skipped) = await Flow.ImportAsync(csv);
+            notice = $"Imported {added}; skipped {skipped}. Research status starts as not reviewed.";
+            csv = "";
+            prospects = await Flow.ListProspectsAsync();
+        }
+        catch (Exception ex) { notice = ex.Message; }
+        finally { busy = false; }
+    }
+}

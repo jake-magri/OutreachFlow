@@ -1,0 +1,55 @@
+@page "/settings"
+@inject OutreachService Flow
+<PageTitle>Settings · OutreachFlow</PageTitle>
+<section class="page-header"><div><div class="eyebrow">CONFIGURABLE CONTEXT</div><h1>Workspace settings</h1><p>Business context, email templates and bounded follow-up defaults can be customized.</p></div></section>
+@if (s is null) { <p>Loading…</p> }
+else
+{
+    <section class="panel spaced">
+        <div class="panel-heading"><h2>Business profile</h2><small>Reusable across future customer workspaces</small></div>
+        <div class="form-grid">
+            <div class="field"><label>Business name</label><input @bind="s.BusinessName" /></div>
+            <div class="field"><label>Sender name</label><input @bind="s.SenderName" /></div>
+            <div class="field"><label>Sender email</label><input @bind="s.SenderEmail" /></div>
+            <div class="field"><label>Phone</label><input @bind="s.SenderPhone" /></div>
+            <div class="field"><label>Service</label><input @bind="s.ServiceDescription" /></div>
+            <div class="field"><label>Service area</label><input @bind="s.ServiceArea" /></div>
+        </div>
+        <div class="field"><label>Target customer/partner context</label><input @bind="s.TargetDescription" /></div>
+        <div class="field"><label>Physical mailing address (required before live commercial outreach)</label><input @bind="s.PostalAddress" /></div>
+    </section>
+    <section class="panel spaced">
+        <div class="panel-heading"><h2>Cadence and safety limits</h2><small>Snapshot per simulated sequence; no automatic worker</small></div>
+        <div class="form-grid">
+            <div class="field"><label>Follow-up emails (1–2)</label><input type="number" min="1" max="2" @bind="s.MaxFollowups" /></div>
+            <div class="field"><label>First follow-up: business days</label><input type="number" min="1" @bind="s.FirstFollowupBusinessDays" /></div>
+            <div class="field"><label>Second follow-up: business days later</label><input type="number" min="1" @bind="s.SecondFollowupBusinessDays" /></div>
+            <div class="field"><label>Move to manual queue after (business days)</label><input type="number" min="1" @bind="s.NoResponseAfterBusinessDays" /></div>
+            <div class="field"><label>Daily send limit (future)</label><input type="number" min="1" @bind="s.DailySendLimit" /></div>
+            <div class="field"><label>Local timezone (IANA, e.g. America/New_York)</label><input @bind="s.TimeZoneId" /></div>
+            <div class="field"><label>Send window start (24h)</label><input type="number" min="8" max="17" @bind="s.SendingStartHour" /></div>
+            <div class="field"><label>Send window end (24h)</label><input type="number" min="9" max="18" @bind="s.SendingEndHour" /></div>
+        </div>
+    </section>
+    <section class="panel spaced">
+        <div class="panel-heading"><h2>Approved templates — draft placeholders</h2><small>No automatic replies</small></div>
+        <p>Supported tokens: <code>[business]</code>, <code>[service]</code>, <code>[area]</code>, <code>[company]</code>, <code>[sender]</code>, <code>[team]</code>.</p>
+        <div class="field"><label>Subject</label><input @bind="s.InitialSubjectTemplate" /></div>
+        <div class="field"><label>Initial inquiry</label><textarea class="textarea" rows="7" @bind="s.InitialBodyTemplate"></textarea></div>
+        <div class="field"><label>Follow-up 1</label><textarea class="textarea" rows="5" @bind="s.FollowupOneTemplate"></textarea></div>
+        <div class="field"><label>Follow-up 2</label><textarea class="textarea" rows="5" @bind="s.FollowupTwoTemplate"></textarea></div>
+        <button class="button primary" @onclick="Save">Save workspace settings</button>
+        @if (!string.IsNullOrWhiteSpace(note)) { <div class="notice">@note</div> }
+    </section>
+}
+@code {
+    private Workspace? s;
+    private string note = "";
+    protected override async Task OnInitializedAsync() => s = await Flow.LoadWorkspaceAsync();
+    private async Task Save()
+    {
+        if (s is null) return;
+        try { await Flow.SaveWorkspaceAsync(s); note = "Saved locally. Sending remains disabled."; }
+        catch (Exception ex) { note = ex.Message; }
+    }
+}

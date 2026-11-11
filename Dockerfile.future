@@ -1,0 +1,16 @@
+# FUTURE ONLY: DO NOT DEPLOY this unauthenticated prototype to the public internet.
+FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
+WORKDIR /src
+COPY OutreachFlow/OutreachFlow.csproj OutreachFlow/
+RUN dotnet restore OutreachFlow/OutreachFlow.csproj
+COPY . .
+RUN dotnet publish OutreachFlow/OutreachFlow.csproj -c Release -o /publish --no-restore
+FROM mcr.microsoft.com/dotnet/aspnet:10.0
+WORKDIR /app
+RUN mkdir -p /app/data && chown -R $APP_UID:$APP_UID /app/data
+COPY --from=build /publish .
+USER $APP_UID
+ENV ASPNETCORE_HTTP_PORTS=8080
+ENV ConnectionStrings__OutreachFlow="Data Source=/app/data/outreachflow.db"
+EXPOSE 8080
+ENTRYPOINT ["dotnet","OutreachFlow.dll"]

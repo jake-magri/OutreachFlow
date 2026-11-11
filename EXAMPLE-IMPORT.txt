@@ -1,0 +1,5 @@
+# Format: Company | Site/branch | Website | Business email
+# Remove these comment lines before pasting into the UI.
+# All entries below are fictional; .example domains are reserved for demonstrations.
+Demo Logistics Group | Charlotte branch | https://demo-logistics.example | vendors@demo-logistics.example
+Example Fleet Company | Southern depot | https://example-fleet.example | purchasing@example-fleet.example
