@@ -68,7 +68,7 @@ public static class LocalRecoveryBundle
                 {
                     ct.ThrowIfCancellationRequested();
                     if (IsLink(source)) throw new InvalidOperationException("Linked auxiliary files cannot be backed up.");
-                    var relative = Path.GetRelativePath(appRoot, source);
+                    var relative = Path.GetRelativePath(appRoot, source).Replace('\\', '/');
                     if (!AllowedRelativePath(relative))
                         throw new InvalidOperationException("Auxiliary file is outside supported recovery paths.");
                     if (new FileInfo(source).Length > MaxAuxFileBytes)
@@ -197,7 +197,9 @@ public static class LocalRecoveryBundle
         var normalized = relative.Replace('\\', '/');
         if (Databases.Contains(normalized, StringComparer.Ordinal)) return true;
         var segments = normalized.Split('/');
-        return segments.Length >= 2 && segments.All(s => s.Length <= 128) &&
+        // All current auxiliary stores are deliberately flat. No nested
+        // symlinked folders or arbitrary restored directory trees.
+        return segments.Length == 2 && segments.All(s => s.Length <= 128) &&
             AuxiliaryDirectories.Contains(segments[0], StringComparer.Ordinal);
     }
 
