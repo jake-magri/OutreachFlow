@@ -66,6 +66,12 @@ public sealed class OpportunityDiscoveryService(
             throw new InvalidOperationException("Workspace changed since discovery. Search again before importing.");
 
         var uri = ResearchUrlPolicy.ParseWebsite(selected.Url);
+        await using (var db = await factory.CreateDbContextAsync(ct))
+        {
+            if (await db.Prospects.AsNoTracking().AnyAsync(
+                x => x.WorkspaceId == currentWorkspace && x.Website == uri.AbsoluteUri, ct))
+                return (0, 1); // Same public URL previously imported under another title.
+        }
         // Indexed metadata is not official evidence, and cannot authorize outreach.
         // Strip the pipe delimiter used by the existing import format.
         var name = (selected.Title ?? "").Replace('|', ' ').Replace('\n', ' ').Replace('\r', ' ').Trim();
