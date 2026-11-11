@@ -112,8 +112,16 @@ public sealed class OutreachService(IDbContextFactory<OutreachDbContext> factory
     }
 
     // Online research is read-only. Discovered links and page snippets never authorize outreach.
-    public async Task<ResearchScan> ResearchCompanyAsync(int id, CancellationToken ct = default)
+    public Task<ResearchScan> ResearchCompanyAsync(int id, CancellationToken ct = default)
+        => ResearchCompanyCoreAsync(id, false, ct);
+
+    public Task<ResearchScan> ResearchCompanyWithBrowserAsync(int id, CancellationToken ct = default)
+        => ResearchCompanyCoreAsync(id, true, ct);
+
+    private async Task<ResearchScan> ResearchCompanyCoreAsync(int id, bool useBrowser, CancellationToken ct)
     {
+        if (useBrowser && researcher is not IBrowserCompanyResearcher)
+            throw new InvalidOperationException("Experimental browser research provider is unavailable.");
         if (researcher is null)
             throw new InvalidOperationException("No website research provider configured.");
         await using var db = await factory.CreateDbContextAsync(ct);
@@ -129,7 +137,9 @@ public sealed class OutreachService(IDbContextFactory<OutreachDbContext> factory
         var profile = profiles is null
             ? ResearchProfileCatalog.Default()
             : await profiles.LoadAsync(workspaceId, ct);
-        var scan = await researcher.SearchAsync(p.Website, profile, ct);
+        var scan = useBrowser
+            ? await ((IBrowserCompanyResearcher)researcher).SearchWithBrowserAsync(p.Website, profile, ct)
+            : await researcher.SearchAsync(p.Website, profile, ct);
         // Recheck after the network request in case another tab took ownership meanwhile.
         await db.Entry(p).ReloadAsync(ct);
         if (p.AutomationPaused || p.Attempts > 0 ||
