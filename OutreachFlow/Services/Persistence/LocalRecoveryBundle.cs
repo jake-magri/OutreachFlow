@@ -63,7 +63,11 @@ public static class LocalRecoveryBundle
                 if (!Directory.Exists(sourceDir)) continue;
                 if (IsLink(sourceDir))
                     throw new InvalidOperationException("Linked auxiliary directories cannot be backed up.");
-                var files = Directory.EnumerateFiles(sourceDir, "*", SearchOption.AllDirectories);
+                // Current auxiliary stores use flat files. Refuse nested directories
+                // rather than following an unexpected directory link or backup tree.
+                if (Directory.EnumerateDirectories(sourceDir, "*", SearchOption.TopDirectoryOnly).Any())
+                    throw new InvalidOperationException("Nested auxiliary folders are unsupported; inspect before backup.");
+                var files = Directory.EnumerateFiles(sourceDir, "*", SearchOption.TopDirectoryOnly);
                 foreach (var source in files)
                 {
                     ct.ThrowIfCancellationRequested();
@@ -111,6 +115,7 @@ public static class LocalRecoveryBundle
         var staging = destination + ".partial-" + Guid.NewGuid().ToString("N");
         try
         {
+            Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
             Directory.CreateDirectory(staging);
             foreach (var file in manifest.Files)
             {
@@ -158,9 +163,10 @@ public static class LocalRecoveryBundle
         foreach (var file in manifest.Files)
         {
             ct.ThrowIfCancellationRequested();
-            if (!AllowedRelativePath(file.RelativePath) ||
+            if (file is null || !AllowedRelativePath(file.RelativePath) ||
                 !seen.Add(file.RelativePath) ||
-                file.Bytes < 0 || file.Sha256.Length != 64 ||
+                file.Bytes < 0 || string.IsNullOrWhiteSpace(file.Sha256) ||
+                file.Sha256.Length != 64 ||
                 !file.Sha256.All(Uri.IsHexDigit))
                 throw new InvalidOperationException("Recovery manifest contains an invalid path, digest or duplicate.");
             var path = Path.Combine(root, file.RelativePath);
