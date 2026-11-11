@@ -32,6 +32,6 @@ public static class StartupDatabase
 
         throw new InvalidOperationException(
             $"Migration history for {contextName} differs from the compiled migrations. " +
-            "Review the database and backup before applying an upgrade. See MIGRATION-BASELINE.md.");
+            "Stop the app and run the recovery CLI upgrade command. See MIGRATION-BASELINE.md.");
     }
 }

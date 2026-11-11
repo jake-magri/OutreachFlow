@@ -1,6 +1,8 @@
 using System.Text.RegularExpressions;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using OutreachFlow.Data;
 
 namespace OutreachFlow.Services.Persistence;
@@ -41,7 +43,7 @@ public static class LegacyMigrationBaseline
         var states = Inspect(databaseDirectory);
         if (states.Any(x => !x.SchemaMatches))
             throw new InvalidOperationException(
-                "Existing schema differs from the current EF model; adoption refused. " +
+                "Existing schema differs from its recorded migration version; adoption refused. " +
                 string.Join("; ", states.Where(s => !s.SchemaMatches)
                     .Select(s => s.File + ": " + s.Detail)));
 
@@ -70,34 +72,26 @@ public static class LegacyMigrationBaseline
         using var current = Open(path, SqliteOpenMode.ReadOnly);
         VerifySqlite(current, name);
 
+        var migrationId = InitialMigration(isIdentity);
+        var history = ReadHistory(current);
         using var expected = new SqliteConnection("Data Source=:memory:");
         expected.Open();
-        using (DbContext context = isIdentity
-            ? new AccountDbContext(new DbContextOptionsBuilder<AccountDbContext>()
-                .UseSqlite(expected).Options)
-            : new OutreachDbContext(new DbContextOptionsBuilder<OutreachDbContext>()
-                .UseSqlite(expected).Options))
+        using (DbContext context = CreateContext(expected, isIdentity))
         {
-            context.Database.EnsureCreated();
+            var known = context.Database.GetMigrations().ToArray();
+            if (!history.Select(h => h.Migration).SequenceEqual(known.Take(history.Count)) ||
+                history.Count > known.Length)
+                throw new InvalidOperationException(name + " contains unknown or incomplete migration history.");
+            // Reconstruct the version actually recorded on disk. Legacy databases
+            // are compared to the frozen initial migration, even as the model evolves.
+            context.GetService<IMigrator>().Migrate(history.LastOrDefault().Migration ?? migrationId);
         }
-
-        // Compare the actual SQLite DDL from an equivalent EnsureCreated database.
-        // This is intentionally stricter than table names/column counts: indexes,
-        // defaults and FK definitions cannot silently differ.
         var realSchema = Schema(current);
         var expectedSchema = Schema(expected);
         var matches = realSchema.SequenceEqual(expectedSchema, StringComparer.Ordinal);
-        var migrationId = InitialMigration(isIdentity);
-        var history = ReadHistory(current);
-        if (history.Count > 0 &&
-            (history.Count != 1 || history[0].Migration != migrationId ||
-             history[0].ProductVersion != Version))
-            throw new InvalidOperationException(
-                name + " already contains unknown migrations; inspect manually.");
-
-        var detail = matches ? "Schema matches current EnsureCreated model."
+        var detail = matches ? "Schema matches its recorded migration version (initial baseline for legacy files)."
             : SchemaDifference(realSchema, expectedSchema);
-        return new DatabaseStatus(name, migrationId, matches, history.Count == 1, detail);
+        return new DatabaseStatus(name, migrationId, matches, history.Count > 0, detail);
     }
 
     private static string InitialMigration(bool isIdentity)
@@ -111,11 +105,33 @@ public static class LegacyMigrationBaseline
                 .UseSqlite("Data Source=:memory:").Options);
         var ids = context.Database.GetMigrations().ToArray();
         var expectedSuffix = isIdentity ? "_InitialIdentitySchema" : "_InitialBusinessSchema";
-        if (ids.Length != 1 || !ids[0].EndsWith(expectedSuffix, StringComparison.Ordinal))
+        if (ids.Length == 0 || !ids[0].EndsWith(expectedSuffix, StringComparison.Ordinal))
             throw new InvalidOperationException(
-                "Expected exactly one compiled initial migration for " +
+                "Expected a compiled initial migration for " +
                 (isIdentity ? "Identity" : "business") + " context. Migration baseline is not ready.");
         return ids[0];
+    }
+
+    private static DbContext CreateContext(SqliteConnection connection, bool isIdentity) =>
+        isIdentity
+            ? new AccountDbContext(new DbContextOptionsBuilder<AccountDbContext>().UseSqlite(connection).Options)
+            : new OutreachDbContext(new DbContextOptionsBuilder<OutreachDbContext>().UseSqlite(connection).Options);
+
+    public static async Task UpgradeAsync(string databaseDirectory,
+        string applicationContentDirectory, string newBackupDirectory, CancellationToken ct = default)
+    {
+        // Inspect both files and back up the entire installation before stamping
+        // either baseline or applying any incremental migration.
+        await AdoptAsync(databaseDirectory, applicationContentDirectory, newBackupDirectory, ct);
+        foreach (var file in new[] { BusinessFile, AccountsFile })
+        {
+            using var connection = Open(Path.Combine(Path.GetFullPath(databaseDirectory), file),
+                SqliteOpenMode.ReadWrite);
+            using var context = CreateContext(connection, file == AccountsFile);
+            await context.Database.MigrateAsync(ct);
+        }
+        if (Inspect(databaseDirectory).Any(s => !s.SchemaMatches))
+            throw new InvalidOperationException("Post-upgrade schema verification failed. Keep the backup and review recovery.");
     }
 
     private static IReadOnlyList<string> Schema(SqliteConnection connection)
@@ -232,5 +248,9 @@ public static class LegacyMigrationBaseline
         cmd.CommandText = "PRAGMA integrity_check;";
         if (cmd.ExecuteScalar() is not string value || value != "ok")
             throw new InvalidOperationException("SQLite integrity check failed for " + name);
+        cmd.CommandText = "PRAGMA foreign_key_check;";
+        using var violations = cmd.ExecuteReader();
+        if (violations.Read())
+            throw new InvalidOperationException("SQLite foreign-key check failed for " + name);
     }
 }

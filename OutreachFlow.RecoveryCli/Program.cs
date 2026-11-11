@@ -7,6 +7,7 @@ Commands:
   backup  <database-directory> <application-content-directory> <new-bundle-directory>
   verify  <bundle-directory>
   restore <bundle-directory> <new-empty-restore-directory>
+  upgrade <database-directory> <application-content-directory> <new-backup-directory>
   baseline inspect <database-directory>
   baseline adopt <database-directory> <application-content-directory> <new-backup-directory>
 
@@ -36,6 +37,10 @@ try
     LocalRecoveryBundle.Manifest bundle;
     switch (args[0].ToLowerInvariant())
     {
+        case "upgrade" when args.Length == 4:
+            await LegacyMigrationBaseline.UpgradeAsync(args[1], args[2], args[3]);
+            Console.WriteLine("Both databases upgraded and schema-verified. Keep the recovery bundle.");
+            break;
         case "backup" when args.Length == 4:
             bundle = await LocalRecoveryBundle.CreateAsync(args[1], args[2], args[3]);
             Console.WriteLine($"Recovery bundle created with {bundle.Files.Count} verified files.");

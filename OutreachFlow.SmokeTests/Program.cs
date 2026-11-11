@@ -1,4 +1,6 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using System.Net;
 using OutreachFlow.Services.Research;
 using OutreachFlow.Services.Discovery;
@@ -32,6 +34,8 @@ static async Task MustReject(Func<Task> action, string scenario)
     throw new Exception($"FAILED: {scenario}");
 }
 
+await ProviderMessageTests.RunAsync();
+
 // EF Core migrations: validate a disposable legacy EnsureCreated database before
 // recording baseline history. No real user files are touched by these tests.
 var migrationTestRoot = Path.Combine(Path.GetTempPath(),
@@ -53,13 +57,24 @@ try
     string ownerId;
     await using (var business = new OutreachDbContext(legacyBusinessOptions))
     {
-        await business.Database.EnsureCreatedAsync();
+        await business.GetService<IMigrator>().MigrateAsync(business.Database.GetMigrations().First());
+        await business.Database.ExecuteSqlRawAsync("DROP TABLE __EFMigrationsHistory");
         business.Workspaces.Add(new Workspace { BusinessName = "Preserve me" });
+        await business.SaveChangesAsync();
+        var legacyProspect = new Prospect { WorkspaceId = business.Workspaces.Local.Single().Id,
+            CompanyName = "Legacy Gmail", ContactEmail = "legacy@example.org" };
+        business.Prospects.Add(legacyProspect);
+        await business.SaveChangesAsync();
+        business.Messages.Add(new OutreachMessage { ProspectId = legacyProspect.Id,
+            Direction = "Inbound", IsSimulation = false, Body = "Preserve this legacy reply" });
+        business.Activities.Add(new ActivityEntry { ProspectId = legacyProspect.Id,
+            Kind = "Gmail inbound imported", Detail = "gmail:legacy-id" });
         await business.SaveChangesAsync();
     }
     await using (var identity = new AccountDbContext(legacyIdentityOptions))
     {
-        await identity.Database.EnsureCreatedAsync();
+        await identity.GetService<IMigrator>().MigrateAsync(identity.Database.GetMigrations().First());
+        await identity.Database.ExecuteSqlRawAsync("DROP TABLE __EFMigrationsHistory");
         var owner = new ApplicationUser
         {
             UserName = "legacy-owner@example.org",
@@ -79,7 +94,8 @@ try
     }
 
     await using (var business = new OutreachDbContext(legacyBusinessOptions))
-        await StartupDatabase.InitializeAsync(business);
+        await MustReject(() => StartupDatabase.InitializeAsync(business),
+            "legacy business startup directs the operator to the explicit upgrade");
     await using (var identity = new AccountDbContext(legacyIdentityOptions))
         await StartupDatabase.InitializeAsync(identity);
 
@@ -93,6 +109,8 @@ try
           (await LocalRecoveryBundle.VerifyAsync(backup)).Files.Count == 2,
         "baseline adoption first writes a verified recovery bundle, then stamps both histories");
 
+    await LegacyMigrationBaseline.UpgradeAsync(legacyDir, auxDir,
+        Path.Combine(migrationTestRoot, "upgrade-backup"));
     await using (var business = new OutreachDbContext(legacyBusinessOptions))
     {
         Check((await business.Database.GetPendingMigrationsAsync()).Count() == 0 &&
@@ -108,6 +126,25 @@ try
             "existing Google/password identity tables and owner membership survive baseline adoption");
         await StartupDatabase.InitializeAsync(identity);
     }
+
+    var restoredLegacy = Path.Combine(migrationTestRoot, "restored-legacy");
+    await LocalRecoveryBundle.RestoreAsync(backup, restoredLegacy);
+    await LegacyMigrationBaseline.UpgradeAsync(restoredLegacy, auxDir,
+        Path.Combine(migrationTestRoot, "direct-legacy-upgrade-backup"));
+    Check(LegacyMigrationBaseline.Inspect(restoredLegacy).All(s => s.SchemaMatches && s.AlreadyAdopted),
+        "one upgrade command accepts restored unadopted legacy databases");
+    await using (var business = new OutreachDbContext(legacyBusinessOptions))
+        Check(await business.Activities.AnyAsync(a => a.Detail == "gmail:legacy-id") &&
+            await business.Messages.AnyAsync(m => m.Body == "Preserve this legacy reply") &&
+            await business.Prospects.AnyAsync(p => p.CompanyName == "Legacy Gmail"),
+            "existing Gmail audit history survives the incremental migration");
+    // Simulate a retryable mixed-version pair after a partial cross-file operation.
+    await using (var identity = new AccountDbContext(legacyIdentityOptions))
+        await identity.Database.ExecuteSqlRawAsync("DROP TABLE __EFMigrationsHistory");
+
+    // Retry after a completed upgrade checks the recorded version and preserves rows.
+    await LegacyMigrationBaseline.UpgradeAsync(legacyDir, auxDir,
+        Path.Combine(migrationTestRoot, "retry-backup"));
 
     // A fresh install must be buildable entirely from the generated migrations.
     var freshBusinessOptions = new DbContextOptionsBuilder<OutreachDbContext>()
@@ -126,7 +163,8 @@ try
     {
         await StartupDatabase.InitializeAsync(business);
         await business.Database.ExecuteSqlRawAsync("""
-            UPDATE "__EFMigrationsHistory" SET "MigrationId" = '20990101000000_Unknown';
+            UPDATE "__EFMigrationsHistory" SET "MigrationId" = '20990101000000_Unknown'
+            WHERE "MigrationId" = (SELECT MIN("MigrationId") FROM "__EFMigrationsHistory");
             """);
         await MustReject(() => StartupDatabase.InitializeAsync(business),
             "startup rejects migration history from an unknown version");
@@ -388,6 +426,7 @@ var encodedBody = GmailMailboxService.Base64Url(Encoding.UTF8.GetBytes(
 var receivedMillis = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 using var gmailMessage = JsonDocument.Parse(JsonSerializer.Serialize(new
 {
+    id = "provider-id-1", threadId = "thread-1",
     internalDate = receivedMillis.ToString(),
     labelIds = new[] { "INBOX" },
     payload = new
