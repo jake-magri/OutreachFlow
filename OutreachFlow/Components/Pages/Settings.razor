@@ -1,3 +1,4 @@
+@using OutreachFlow.Services.Research
 @page "/settings"
 @inject OutreachService Flow
 <PageTitle>Settings · OutreachFlow</PageTitle>
@@ -17,6 +18,32 @@ else
         </div>
         <div class="field"><label>Target customer/partner context</label><input @bind="s.TargetDescription" /></div>
         <div class="field"><label>Physical mailing address (required before live commercial outreach)</label><input @bind="s.PostalAddress" /></div>
+    </section>
+    <section class="panel spaced">
+        <div class="panel-heading"><h2>Website research profile</h2><small>Per workspace · read-only research</small></div>
+        <p>Choose a starting preset or edit the literal keywords. Keywords guide which pages are examined and highlighted;
+           they do not fetch internet search results, verify eligibility, or authorize messages.</p>
+        <div class="field"><label>Start from a preset</label>
+            <select @bind="selectedPreset">
+                @foreach (var option in ResearchProfileCatalog.Choices)
+                {
+                    <option value="@option.Key">@option.Label</option>
+                }
+            </select>
+        </div>
+        <button class="button" @onclick="ApplyPreset">Load preset into editor (not saved)</button>
+        @if (profile is not null)
+        {
+            <div class="field"><label>Profile name</label><input @bind="profile.Name" maxlength="100" /></div>
+            <div class="field"><label>Research objective</label><textarea @bind="profile.Objective" class="textarea" rows="3"></textarea></div>
+            <div class="field"><label>Priority / industry terms (one per line)</label><textarea @bind="priorityTerms" class="textarea" rows="6"></textarea></div>
+            <div class="field"><label>Application / process terms (one per line)</label><textarea @bind="processTerms" class="textarea" rows="5"></textarea></div>
+            <div class="field"><label>Excluded terms (one per line)</label><textarea @bind="excludedTerms" class="textarea" rows="4"></textarea></div>
+            <button class="button primary" @onclick="SaveProfile">Save research profile</button>
+        }
+        @if (!string.IsNullOrWhiteSpace(profileNote)) { <div class="notice">@profileNote</div> }
+        <small>Existing workspaces use a general supplier-research profile until customized. Research remains an explicit click;
+            process findings and contacts require human review. These settings do not modify existing SQLite data.</small>
     </section>
     <section class="panel spaced">
         <div class="panel-heading"><h2>Cadence and safety limits</h2><small>Snapshot per simulated sequence; no automatic worker</small></div>
@@ -44,8 +71,48 @@ else
 }
 @code {
     private Workspace? s;
+    private ResearchProfile? profile;
+    private string priorityTerms = "";
+    private string processTerms = "";
+    private string excludedTerms = "";
+    private string selectedPreset = "general";
+    private string profileNote = "";
+    private void SetProfile(ResearchProfile value)
+    {
+        profile = value;
+        priorityTerms = string.Join(Environment.NewLine, value.PriorityTerms);
+        processTerms = string.Join(Environment.NewLine, value.ProcessTerms);
+        excludedTerms = string.Join(Environment.NewLine, value.ExcludedTerms);
+    }
+    private void ApplyPreset()
+    {
+        try { SetProfile(ResearchProfileCatalog.Preset(selectedPreset)); profileNote = "Preset loaded. Save to apply it to future scans."; }
+        catch (InvalidOperationException ex) { profileNote = ex.Message; }
+    }
+    private static string[] Lines(string source) =>
+        source.Split('\n', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+    private async Task SaveProfile()
+    {
+        if (profile is null) return;
+        try
+        {
+            profile.PriorityTerms = Lines(priorityTerms);
+            profile.ProcessTerms = Lines(processTerms);
+            profile.ExcludedTerms = Lines(excludedTerms);
+            var validated = ResearchProfile.Validate(profile);
+            await Flow.SaveResearchProfileAsync(validated);
+            SetProfile(validated);
+            profileNote = "Research profile saved for this workspace. No emails sent.";
+        }
+        catch (Exception ex) { profileNote = ex.Message; }
+    }
     private string note = "";
-    protected override async Task OnInitializedAsync() => s = await Flow.LoadWorkspaceAsync();
+    protected override async Task OnInitializedAsync()
+    {
+        s = await Flow.LoadWorkspaceAsync();
+        try { SetProfile(await Flow.LoadResearchProfileAsync()); }
+        catch (Exception ex) { profileNote = "Research profile could not be loaded: " + ex.Message; }
+    }
     private async Task Save()
     {
         if (s is null) return;
