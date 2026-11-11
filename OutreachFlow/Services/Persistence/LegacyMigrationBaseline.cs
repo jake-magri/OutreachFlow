@@ -8,9 +8,9 @@ using OutreachFlow.Data;
 namespace OutreachFlow.Services.Persistence;
 
 /// <summary>
-/// Explicit opt-in adoption of the initial migration by databases originally
-/// created with EnsureCreated. Never drops or alters an existing business table.
-/// No web startup path calls this utility.
+/// Explicit baseline adoption and backup-first upgrades for existing databases.
+/// Adoption records history. Incremental migrations may rebuild existing tables.
+/// Invoked by the recovery CLI while the application is stopped.
 /// </summary>
 public static class LegacyMigrationBaseline
 {
