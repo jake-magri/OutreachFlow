@@ -166,6 +166,21 @@ public sealed class OutreachService(IDbContextFactory<OutreachDbContext> factory
                 CheckedUtc = checkedUtc, IsOfficial = false
             });
         }
+        foreach (var diagnostic in scan.PageDiagnostics.Where(x => x.IsInconclusive).Take(6))
+        {
+            var title = "Research warning: content incomplete";
+            var observation = $"Page title: {diagnostic.Title}; readable characters: {diagnostic.VisibleCharacters}. {diagnostic.Warning}";
+            if (existing.Any(e => e.SourceUrl.Equals(diagnostic.Url, StringComparison.OrdinalIgnoreCase) &&
+                e.SourceTitle == title && e.ExcerptOrObservation == observation))
+                continue;
+            db.ResearchEvidence.Add(new ResearchEvidence
+            {
+                ProspectId = id, SourceTitle = title,
+                SourceUrl = diagnostic.Url[..Math.Min(diagnostic.Url.Length, 2048)],
+                ExcerptOrObservation = observation[..Math.Min(observation.Length, 1200)],
+                CheckedUtc = checkedUtc, IsOfficial = false
+            });
+        }
         foreach (var checkedPage in scan.PagesChecked.Take(6))
         {
             if (existing.Any(e => e.SourceUrl == checkedPage && e.SourceTitle == "Research scan: page checked"))
@@ -185,7 +200,7 @@ public sealed class OutreachService(IDbContextFactory<OutreachDbContext> factory
         p.UpdatedUtc = checkedUtc;
         AddActivity(db, id, "Website scan", $"Checked {scan.PagesChecked.Count} HTML page(s), " +
             $"found {scan.Candidates.Count} candidate reference(s) and {scan.Contacts.Count} public contact(s). " +
-            $"Review required. {scan.SuggestedReview} {scan.Limitations}");
+            $"Inconclusive pages: {scan.PageDiagnostics.Count(x => x.IsInconclusive)}. Review required. {scan.SuggestedReview} {scan.Limitations}");
         await db.SaveChangesAsync(ct);
         return scan;
     }
