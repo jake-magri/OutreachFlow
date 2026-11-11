@@ -40,6 +40,8 @@ builder.Services.AddScoped<IWorkspaceAccess, AuthenticatedWorkspaceAccess>();
 builder.Services.AddDbContextFactory<OutreachDbContext>(options =>
     options.UseSqlite(builder.Configuration.GetConnectionString("OutreachFlow")
         ?? "Data Source=outreachflow.db"));
+builder.Services.AddSingleton<IResearchProfileStore>(_ =>
+    new JsonResearchProfileStore(Path.Combine(builder.Environment.ContentRootPath, "research-profiles")));
 builder.Services.AddScoped<OutreachService>();
 builder.Services.AddSingleton<ICompanyResearcher, OfficialSiteResearcher>();
 builder.Services.AddSingleton<IOutboundEmail, DryRunEmail>();

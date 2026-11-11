@@ -33,6 +33,67 @@ Check(blankWorkspace.BusinessName == "New workspace" &&
       string.IsNullOrWhiteSpace(blankWorkspace.TargetDescription),
     "new workspace defaults contain no personal or niche-specific business contact data");
 
+// Workspace-specific research profiles must not leak between businesses or depend on SQLite migrations.
+var profileDirectory = Path.Combine(Path.GetTempPath(), "outreachflow-profile-tests-" + Guid.NewGuid().ToString("N"));
+try
+{
+    var profileStore = new JsonResearchProfileStore(profileDirectory);
+    Check((await profileStore.LoadAsync(1)).Name == ResearchProfileCatalog.Default().Name,
+        "missing profile loads a safe general preset");
+    var fleetProfile = ResearchProfileCatalog.Preset("fleet");
+    var jobProfile = ResearchProfileCatalog.Preset("junior-dev");
+    await profileStore.SaveAsync(1, fleetProfile);
+    await profileStore.SaveAsync(2, jobProfile);
+    var retained = new JsonResearchProfileStore(profileDirectory);
+    Check((await retained.LoadAsync(1)).Name == fleetProfile.Name &&
+          (await retained.LoadAsync(2)).Name == jobProfile.Name &&
+          ResearchProfileRules.ScoreLink("fleet washing service", fleetProfile) >
+              ResearchProfileRules.ScoreLink("fleet washing service", jobProfile),
+        "two workspaces retain different research criteria across store instances");
+    Check(ResearchProfileRules.ScoreLink("career openings for junior developer", jobProfile) > 0 &&
+          ResearchProfileRules.ScoreLink("career openings for junior developer", fleetProfile) < 1,
+        "jobs and commercial supplier research use different keyword policies");
+    Check(ResearchProfileRules.ScoreLink("privacy policy", fleetProfile) < 0 &&
+          ResearchProfileRules.ScoreLink("vendor registration", fleetProfile) > 0,
+        "exclusions override otherwise relevant link text");
+    await MustReject(() => profileStore.SaveAsync(1, new ResearchProfile
+    {
+        Name = "Invalid", Objective = "Invalid profile",
+        PriorityTerms = ["valid", new string('x', 81)], ProcessTerms = ["apply"]
+    }), "oversized research keyword rejected");
+    await File.WriteAllTextAsync(Path.Combine(profileDirectory, "workspace-2.json"), "{broken");
+    await MustReject(() => retained.LoadAsync(2), "corrupted profile fails closed rather than resetting silently");
+    Check((await retained.LoadAsync(1)).Name == fleetProfile.Name,
+        "corrupted profile for one business does not affect another business");
+}
+finally { if (Directory.Exists(profileDirectory)) Directory.Delete(profileDirectory, recursive: true); }
+
+// A 200 OK status can return misleading HTML. Test quality checks without external HTTP.
+var generalResearch = ResearchProfileCatalog.Default();
+var suspectUri = new Uri("https://www.example.org/doing-business/supplier-registration");
+var shell = ResearchPageInspector.Inspect(suspectUri,
+    "<html><head><title>Supplier Registration</title></head><body><div id='app'></div><script>renderApp()</script></body></html>",
+    generalResearch);
+Check(shell.IsInconclusive && shell.VisibleCharacters < 120,
+    "JavaScript-only HTML shell cannot be treated as a complete researched page");
+var challenge = ResearchPageInspector.Inspect(suspectUri,
+    "<html><title>Just a moment...</title><body>Checking your browser before accessing the site. Verify you are human.</body></html>",
+    generalResearch);
+Check(challenge.IsInconclusive && challenge.Warning.Contains("challenge", StringComparison.OrdinalIgnoreCase),
+    "HTTP 200 challenge page is classified as incomplete");
+var realPage = ResearchPageInspector.Inspect(suspectUri,
+    "<html><head><title>Supplier Registration</title></head><body><main><h1>Supplier registration</h1>" +
+    "<p>Vendors interested in doing business should complete the supplier registration process.</p>" +
+    "<p>Register your business using the official vendor portal and review requirements before submission.</p>" +
+    "</main></body></html>", generalResearch);
+Check(!realPage.IsInconclusive && realPage.MatchedTerms.Any(),
+    "meaningful supplier registration HTML passes content quality assessment");
+var mismatchedPage = ResearchPageInspector.Inspect(suspectUri,
+    "<html><head><title>Welcome</title></head><body><main>" + new string('x', 200) +
+    "</main></body></html>", generalResearch);
+Check(mismatchedPage.IsInconclusive,
+    "a supplier-registration URL with unrelated HTML requires manual review");
+
 // NY daylight-saving time starts on Sunday, March 8, 2026.
 var thursday = new DateTime(2026, 3, 6, 15, 0, 0, DateTimeKind.Utc);
 var monday = BusinessCalendar.AddBusinessDays(thursday, 1, "America/New_York", 9);
