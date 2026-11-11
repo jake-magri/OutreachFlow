@@ -331,7 +331,7 @@ try
         var fakeSearch = new FakeWebSearchProvider();
         var discovery = new OpportunityDiscoveryService(fakeSearch,
             new LocalSearchUsageBudget(Path.Combine(discoveryPath, "budget"), 5),
-            profileStoreForDiscovery, new FixedWorkspaceAccess(1), factory, flow);
+            profileStoreForDiscovery, new FixedWorkspaceAccess(1), factory);
         var prior = (await flow.ListProspectsAsync()).Count;
         var discovered = await discovery.DiscoverAsync();
         Check(discovered.Candidates.Count == 1 && discovered.Queries.Count == 2 &&
