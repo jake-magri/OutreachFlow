@@ -302,6 +302,12 @@ try
             { await discovery.ImportReviewedAsync(777, discovered.Candidates[0]); },
             "discovery import refuses stale or switched workspace");
         var imported = await discovery.ImportReviewedAsync(1, discovered.Candidates[0]);
+        var repeated = await discovery.ImportReviewedAsync(1, discovered.Candidates[0] with
+        {
+            Title = "Renamed search index listing"
+        });
+        Check(repeated.Added == 0 && repeated.Skipped == 1,
+            "repeated index URL does not import duplicate records after title changes");
         var newProspect = (await flow.ListProspectsAsync()).Single(p =>
             p.Website == "https://city.example.org/supplier-registration");
         Check(imported.Added == 1 &&
