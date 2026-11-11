@@ -1,0 +1,53 @@
+name: Build and smoke tests
+
+on:
+  push:
+    branches: [main, "feature/**"]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+      - name: Set up .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - name: Restore
+        run: dotnet restore OutreachFlow.slnx
+      - name: Build
+        run: dotnet build OutreachFlow.slnx --no-restore --configuration Release
+      - name: Smoke tests
+        run: dotnet run --project OutreachFlow.SmokeTests/OutreachFlow.SmokeTests.csproj --configuration Release --no-build
+      - name: Launch local site and verify protected routes
+        shell: bash
+        run: |
+          dotnet dev-certs https
+          dotnet run --project OutreachFlow/OutreachFlow.csproj --no-build --configuration Release --launch-profile OutreachFlow > /tmp/outreachflow-startup.log 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid" 2>/dev/null || true' EXIT
+          ready=0
+          for i in $(seq 1 40); do
+            if curl --insecure --silent --fail https://localhost:7117/account/setup -o /tmp/setup.html; then
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+          if [ "$ready" != 1 ]; then
+            cat /tmp/outreachflow-startup.log
+            exit 1
+          fi
+          grep -q "Set up your owner account" /tmp/setup.html
+          status=$(curl --insecure --silent --output /dev/null --write-out '%{http_code}' https://localhost:7117/)
+          if [ "$status" != "302" ]; then
+            echo "Expected dashboard to redirect unauthenticated user, got: $status"
+            cat /tmp/outreachflow-startup.log
+            exit 1
+          fi

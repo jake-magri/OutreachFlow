@@ -40,7 +40,7 @@ try
         db.Workspaces.Add(new Workspace());
         await db.SaveChangesAsync();
     }
-    var flow = new OutreachService(factory, new DryRunEmail());
+    var flow = new OutreachService(factory, new DryRunEmail(), new FixedWorkspaceAccess(1));
     var (added, skipped) = await flow.ImportAsync("Portal Co | South | https://portal.example | vendors@portal.example\n" +
         "Fleet Co | HQ | https://fleet.example | vendor@fleet.example\n" +
         "Fleet Co | HQ | https://fleet.example | vendor@fleet.example\n" +
@@ -62,7 +62,7 @@ try
         ResearchUrlPolicy.ParseWebsite("http://localhost/");
         return Task.CompletedTask;
     }, "research rejects localhost websites");
-    var researchFlow = new OutreachService(factory, new DryRunEmail(), new FakeResearcher());
+    var researchFlow = new OutreachService(factory, new DryRunEmail(), new FixedWorkspaceAccess(1), new FakeResearcher());
     await researchFlow.ImportAsync("Website Research Co | South | https://www.example.org | vendor@example.org");
     var researchId = (await researchFlow.ListProspectsAsync()).Single(p => p.CompanyName == "Website Research Co").Id;
     var scan = await researchFlow.ResearchCompanyAsync(researchId);
@@ -136,6 +136,30 @@ try
     var csv = await flow.ExportCsvAsync();
     Check(csv.Contains("\"'=Formula Co\""), "CSV export escapes spreadsheet formulas");
     Check(csv.Contains("WarmLead") && csv.Contains("Suppressed"), "CSV export includes queue states");
+    // Explicit tenant isolation tests: the second business cannot read or modify tenant one.
+    int otherWorkspaceId;
+    await using (var db = factory.CreateDbContext())
+    {
+        var second = new Workspace { BusinessName = "Second Workspace" };
+        db.Workspaces.Add(second);
+        await db.SaveChangesAsync();
+        otherWorkspaceId = second.Id;
+    }
+    var secondFlow = new OutreachService(factory, new DryRunEmail(), new FixedWorkspaceAccess(otherWorkspaceId), new FakeResearcher());
+    Check((await secondFlow.ListProspectsAsync()).Count == 0, "second workspace cannot list first workspace's prospects");
+    Check(await secondFlow.GetDetailsAsync(Id("Fleet Co")) is null,
+        "second workspace cannot read first workspace's prospect details");
+    await MustReject(() => secondFlow.CloseAsync(Id("Fleet Co")),
+        "second workspace cannot mutate first workspace's prospect");
+    await secondFlow.ImportAsync("Tenant Two Co | HQ | https://tenant2.example | hello@tenant2.example");
+    Check((await secondFlow.ListProspectsAsync()).Count == 1 &&
+          (await flow.ListProspectsAsync()).All(p => p.CompanyName != "Tenant Two Co"),
+          "imports stay within the selected workspace");
+    Check(!(await secondFlow.ExportCsvAsync()).Contains("Fleet Co"),
+          "exports exclude other workspace data");
+    var secondSettings = await secondFlow.LoadWorkspaceAsync();
+    Check(secondSettings.BusinessName == "Second Workspace",
+          "workspace settings are scoped to the selected business");
     Console.WriteLine("All OutreachFlow offline smoke tests passed.");
 }
 finally

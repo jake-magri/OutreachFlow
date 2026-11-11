@@ -40,3 +40,9 @@
 - For a private app: owner login, HTTPS proxy, firewall, DNS, secure cookie configuration, secret management, offsite backups + restore test and budget alerts.
 - Hosted DB remains private. SQLite can suit one running instance; do not run multiple app instances against a network filesystem or rely on a snapshot as the only backup.
 - Email and research API spending will be separately budgeted. Never enable arbitrary background emailing just because hosting is available.
+
+## In progress — multi-workspace foundations (draft PR)
+- Local ASP.NET Core Identity account setup and login in a separate auth SQLite database.
+- WorkspaceMembership + active workspace selection, server-side prospect/settings scoping.
+- GitHub Actions .NET build and isolation smoke tests.
+- Still needed: migrations, verified browser sign-in, invitations/member management, recovery, durable jobs and production hardening.

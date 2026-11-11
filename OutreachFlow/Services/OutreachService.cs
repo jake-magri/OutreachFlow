@@ -10,18 +10,20 @@ namespace OutreachFlow.Services;
 public sealed record ProspectDetails(Prospect Prospect, List<ResearchEvidence> Evidence,
     List<OutreachMessage> Messages, List<ActivityEntry> Activity);
 
-public sealed class OutreachService(IDbContextFactory<OutreachDbContext> factory, IOutboundEmail mail, ICompanyResearcher? researcher = null)
+public sealed class OutreachService(IDbContextFactory<OutreachDbContext> factory, IOutboundEmail mail, IWorkspaceAccess access, ICompanyResearcher? researcher = null)
 {
     public async Task<Workspace> LoadWorkspaceAsync()
     {
         await using var db = await factory.CreateDbContextAsync();
-        return await db.Workspaces.AsNoTracking().SingleAsync();
+        var workspaceId = await access.ActiveWorkspaceIdAsync();
+        return await db.Workspaces.AsNoTracking().SingleAsync(w => w.Id == workspaceId);
     }
 
     public async Task SaveWorkspaceAsync(Workspace updated)
     {
         await using var db = await factory.CreateDbContextAsync();
-        var s = await db.Workspaces.SingleAsync();
+        var workspaceId = await access.ActiveWorkspaceIdAsync();
+        var s = await db.Workspaces.SingleAsync(w => w.Id == workspaceId);
         s.BusinessName = updated.BusinessName.Trim();
         s.SenderName = updated.SenderName.Trim();
         s.SenderEmail = updated.SenderEmail.Trim();
@@ -49,13 +51,16 @@ public sealed class OutreachService(IDbContextFactory<OutreachDbContext> factory
     public async Task<List<Prospect>> ListProspectsAsync()
     {
         await using var db = await factory.CreateDbContextAsync();
-        return await db.Prospects.AsNoTracking().OrderByDescending(p => p.UpdatedUtc).ToListAsync();
+        var workspaceId = await access.ActiveWorkspaceIdAsync();
+        return await db.Prospects.AsNoTracking().Where(p => p.WorkspaceId == workspaceId)
+            .OrderByDescending(p => p.UpdatedUtc).ToListAsync();
     }
 
     public async Task<ProspectDetails?> GetDetailsAsync(int id)
     {
         await using var db = await factory.CreateDbContextAsync();
-        var p = await db.Prospects.AsNoTracking().FirstOrDefaultAsync(x => x.Id == id);
+        var workspaceId = await access.ActiveWorkspaceIdAsync();
+        var p = await db.Prospects.AsNoTracking().FirstOrDefaultAsync(x => x.Id == id && x.WorkspaceId == workspaceId);
         if (p is null) return null;
         return new ProspectDetails(p,
             await db.ResearchEvidence.AsNoTracking().Where(x => x.ProspectId == id).OrderByDescending(x => x.CheckedUtc).ToListAsync(),
@@ -67,10 +72,12 @@ public sealed class OutreachService(IDbContextFactory<OutreachDbContext> factory
     {
         await using var db = await factory.CreateDbContextAsync();
         int added = 0, skipped = 0;
-        var seen = await db.Prospects.Select(p => new { p.CompanyName, p.SiteName }).ToListAsync();
+        var workspaceId = await access.ActiveWorkspaceIdAsync();
+        var seen = await db.Prospects.Where(p => p.WorkspaceId == workspaceId)
+            .Select(p => new { p.CompanyName, p.SiteName }).ToListAsync();
         var keys = new HashSet<string>(seen.Select(p => Key(p.CompanyName, p.SiteName)), StringComparer.OrdinalIgnoreCase);
         // Never reimport a suppressed address under a newly named company/site.
-        var blockedEmails = (await db.Prospects.Where(p => p.Status == ProspectStatus.Suppressed)
+        var blockedEmails = (await db.Prospects.Where(p => p.WorkspaceId == workspaceId && p.Status == ProspectStatus.Suppressed)
             .Select(p => p.ContactEmail).ToListAsync()).ToHashSet(StringComparer.OrdinalIgnoreCase);
         foreach (var line in lines.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Take(150))
         {
@@ -85,7 +92,7 @@ public sealed class OutreachService(IDbContextFactory<OutreachDbContext> factory
             if (email.Length > 0 && blockedEmails.Contains(email)) { skipped++; continue; }
             keys.Add(k);
             // No automatic external calls; input is stored for manual review.
-            db.Prospects.Add(new Prospect { CompanyName = name, SiteName = site, Website = website, ContactEmail = email });
+            db.Prospects.Add(new Prospect { WorkspaceId = workspaceId, CompanyName = name, SiteName = site, Website = website, ContactEmail = email });
             added++;
         }
         await db.SaveChangesAsync();
@@ -98,7 +105,8 @@ public sealed class OutreachService(IDbContextFactory<OutreachDbContext> factory
         if (researcher is null)
             throw new InvalidOperationException("No website research provider configured.");
         await using var db = await factory.CreateDbContextAsync(ct);
-        var p = await db.Prospects.SingleAsync(x => x.Id == id, ct);
+        var workspaceId = await access.ActiveWorkspaceIdAsync();
+        var p = await db.Prospects.SingleAsync(x => x.Id == id && x.WorkspaceId == workspaceId, ct);
         if (p.AutomationPaused || p.Attempts > 0 ||
             p.Status is ProspectStatus.Suppressed or ProspectStatus.Closed)
             throw new InvalidOperationException("Research is disabled for closed, suppressed, or owner-controlled conversations.");
@@ -155,7 +163,8 @@ public sealed class OutreachService(IDbContextFactory<OutreachDbContext> factory
     public async Task RecordResearchAsync(int id, ResearchOutcome outcome, string url, string title, string note, bool official)
     {
         await using var db = await factory.CreateDbContextAsync();
-        var p = await db.Prospects.SingleAsync(x => x.Id == id);
+        var workspaceId = await access.ActiveWorkspaceIdAsync();
+        var p = await db.Prospects.SingleAsync(x => x.Id == id && x.WorkspaceId == workspaceId);
         if (p.Status == ProspectStatus.Suppressed) throw new InvalidOperationException("Suppressed prospects cannot be reactivated by research.");
         if (p.Attempts > 0 || p.AutomationPaused)
             throw new InvalidOperationException("Research changes after outreach or human takeover require a separate audited review workflow.");
@@ -188,10 +197,11 @@ public sealed class OutreachService(IDbContextFactory<OutreachDbContext> factory
     public async Task GenerateDraftAsync(int id)
     {
         await using var db = await factory.CreateDbContextAsync();
-        var p = await db.Prospects.SingleAsync(x => x.Id == id);
+        var workspaceId = await access.ActiveWorkspaceIdAsync();
+        var p = await db.Prospects.SingleAsync(x => x.Id == id && x.WorkspaceId == workspaceId);
         if (p.Status != ProspectStatus.ReadyToInquire || p.Attempts != 0 || p.AutomationPaused)
             throw new InvalidOperationException("Drafts require an inquiry-eligible research result with no outreach or owner takeover.");
-        var s = await db.Workspaces.SingleAsync();
+        var s = await db.Workspaces.SingleAsync(w => w.Id == workspaceId);
         p.DraftSubject = Expand(s.InitialSubjectTemplate, s, p);
         p.DraftBody = Expand(s.InitialBodyTemplate, s, p);
         p.Status = ProspectStatus.DraftReady;
@@ -203,11 +213,12 @@ public sealed class OutreachService(IDbContextFactory<OutreachDbContext> factory
     public async Task SimulateInitialSendAsync(int id)
     {
         await using var db = await factory.CreateDbContextAsync();
-        var p = await db.Prospects.SingleAsync(x => x.Id == id);
+        var workspaceId = await access.ActiveWorkspaceIdAsync();
+        var p = await db.Prospects.SingleAsync(x => x.Id == id && x.WorkspaceId == workspaceId);
         if (p.Status != ProspectStatus.DraftReady || p.Attempts != 0 || p.AutomationPaused || string.IsNullOrWhiteSpace(p.DraftBody))
             throw new InvalidOperationException("A reviewed, unpaused draft is required.");
         await GuardRecipientAsync(db, p);
-        var settings = await db.Workspaces.SingleAsync();
+        var settings = await db.Workspaces.SingleAsync(w => w.Id == workspaceId);
         var result = await mail.SendAsync(p.ContactEmail, p.DraftSubject, p.DraftBody);
         db.Messages.Add(new OutreachMessage { ProspectId = id, Subject = p.DraftSubject, Body = p.DraftBody });
         p.Attempts = 1;
@@ -228,8 +239,9 @@ public sealed class OutreachService(IDbContextFactory<OutreachDbContext> factory
     public async Task SimulateFollowupAsync(int id)
     {
         await using var db = await factory.CreateDbContextAsync();
-        var p = await db.Prospects.SingleAsync(x => x.Id == id);
-        var s = await db.Workspaces.SingleAsync();
+        var workspaceId = await access.ActiveWorkspaceIdAsync();
+        var p = await db.Prospects.SingleAsync(x => x.Id == id && x.WorkspaceId == workspaceId);
+        var s = await db.Workspaces.SingleAsync(w => w.Id == workspaceId);
         if (p.Status != ProspectStatus.AwaitingReply || p.AutomationPaused || p.Attempts < 1 || p.Attempts >= 1 + p.PlannedFollowups)
             throw new InvalidOperationException("No further follow-up is allowed in this sequence.");
         await GuardRecipientAsync(db, p);
@@ -249,7 +261,8 @@ public sealed class OutreachService(IDbContextFactory<OutreachDbContext> factory
     public async Task MarkNoResponseAsync(int id)
     {
         await using var db = await factory.CreateDbContextAsync();
-        var p = await db.Prospects.SingleAsync(x => x.Id == id);
+        var workspaceId = await access.ActiveWorkspaceIdAsync();
+        var p = await db.Prospects.SingleAsync(x => x.Id == id && x.WorkspaceId == workspaceId);
         if (p.Status != ProspectStatus.AwaitingReply || p.AutomationPaused || p.PlannedFollowups < 1 || p.Attempts < 1 + p.PlannedFollowups)
             throw new InvalidOperationException("Complete the snapshotted simulated sequence first.");
         p.Status = ProspectStatus.ManualNoResponse;
@@ -264,7 +277,8 @@ public sealed class OutreachService(IDbContextFactory<OutreachDbContext> factory
     {
         if (string.IsNullOrWhiteSpace(body)) throw new InvalidOperationException("Enter a test reply.");
         await using var db = await factory.CreateDbContextAsync();
-        var p = await db.Prospects.SingleAsync(x => x.Id == id);
+        var workspaceId = await access.ActiveWorkspaceIdAsync();
+        var p = await db.Prospects.SingleAsync(x => x.Id == id && x.WorkspaceId == workspaceId);
         if (p.Attempts == 0) throw new InvalidOperationException("Simulate an initial message before a reply.");
         if (p.Status == ProspectStatus.Suppressed) throw new InvalidOperationException("This recipient is suppressed.");
         db.Messages.Add(new OutreachMessage { ProspectId = id, Direction = "Inbound", Classification = category.ToString(), Body = body.Trim() });
@@ -287,7 +301,8 @@ public sealed class OutreachService(IDbContextFactory<OutreachDbContext> factory
         if (string.IsNullOrWhiteSpace(note)) throw new InvalidOperationException("Enter a note describing the manual action.");
         if (note.Length > 3000) throw new InvalidOperationException("Keep the note under 3,000 characters.");
         await using var db = await factory.CreateDbContextAsync();
-        var p = await db.Prospects.SingleAsync(x => x.Id == id);
+        var workspaceId = await access.ActiveWorkspaceIdAsync();
+        var p = await db.Prospects.SingleAsync(x => x.Id == id && x.WorkspaceId == workspaceId);
         if (p.Status == ProspectStatus.Suppressed &&
             (activityType != "Internal note" || !string.IsNullOrWhiteSpace(nextAction) || nextDate.HasValue))
             throw new InvalidOperationException("Suppressed prospects accept only internal notes, not outreach or next-contact tasks.");
@@ -303,7 +318,8 @@ public sealed class OutreachService(IDbContextFactory<OutreachDbContext> factory
     public async Task CloseAsync(int id)
     {
         await using var db = await factory.CreateDbContextAsync();
-        var p = await db.Prospects.SingleAsync(x => x.Id == id);
+        var workspaceId = await access.ActiveWorkspaceIdAsync();
+        var p = await db.Prospects.SingleAsync(x => x.Id == id && x.WorkspaceId == workspaceId);
         if (p.Status == ProspectStatus.Suppressed)
             throw new InvalidOperationException("A suppression must remain recorded as suppressed.");
         p.AutomationPaused = true;

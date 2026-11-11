@@ -1,4 +1,7 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.AspNetCore.Identity;
+using OutreachFlow.Models;
 using System.Net;
 using System.Text;
 using OutreachFlow.Components;
@@ -10,6 +13,29 @@ var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents();
+builder.Services.AddCascadingAuthenticationState();
+builder.Services.AddHttpContextAccessor();
+builder.Services.AddDbContextFactory<AccountDbContext>(options =>
+    options.UseSqlite(builder.Configuration.GetConnectionString("Accounts")
+        ?? "Data Source=outreachflow.auth.db"));
+builder.Services.AddIdentityCore<ApplicationUser>(options =>
+{
+    options.User.RequireUniqueEmail = true;
+    options.Password.RequiredLength = 12;
+    options.Lockout.MaxFailedAccessAttempts = 5;
+    options.Lockout.DefaultLockoutTimeSpan = TimeSpan.FromMinutes(15);
+}).AddSignInManager().AddEntityFrameworkStores<AccountDbContext>();
+builder.Services.AddAuthentication(IdentityConstants.ApplicationScheme).AddIdentityCookies();
+builder.Services.Configure<CookieAuthenticationOptions>(IdentityConstants.ApplicationScheme, options =>
+{
+    options.LoginPath = "/account/login";
+    options.AccessDeniedPath = "/account/login";
+    options.Cookie.HttpOnly = true;
+    options.Cookie.SameSite = SameSiteMode.Lax;
+    options.Cookie.SecurePolicy = CookieSecurePolicy.Always;
+});
+builder.Services.AddAuthorization();
+builder.Services.AddScoped<IWorkspaceAccess, AuthenticatedWorkspaceAccess>();
 
 builder.Services.AddDbContextFactory<OutreachDbContext>(options =>
     options.UseSqlite(builder.Configuration.GetConnectionString("OutreachFlow")
@@ -39,22 +65,30 @@ app.Use(async (context, next) =>
 
 app.UseHttpsRedirection();
 app.UseStaticFiles();
+app.UseAuthentication();
+app.UseAuthorization();
 app.UseAntiforgery();
 
 using (var scope = app.Services.CreateScope())
 {
     var factory = scope.ServiceProvider.GetRequiredService<IDbContextFactory<OutreachDbContext>>();
     await using var db = await factory.CreateDbContextAsync();
-    await db.Database.EnsureCreatedAsync(); // Prototype schema; replace with migrations later.
+    await db.Database.EnsureCreatedAsync(); // Existing business database remains intact.
     await DemoData.SeedAsync(db);
+    var authFactory = scope.ServiceProvider.GetRequiredService<IDbContextFactory<AccountDbContext>>();
+    await using var authDb = await authFactory.CreateDbContextAsync();
+    await authDb.Database.EnsureCreatedAsync(); // Separate local auth database; migrations are a follow-up.
 }
+
+app.MapOutreachAccounts();
 
 // Local export of pipeline metadata (not email content).
 app.MapGet("/export/prospects.csv", async (OutreachService service) =>
     Results.File(Encoding.UTF8.GetBytes("\uFEFF" + await service.ExportCsvAsync()),
-        "text/csv; charset=utf-8", "OutreachFlow-prospects.csv"));
+        "text/csv; charset=utf-8", "OutreachFlow-prospects.csv")).RequireAuthorization();
 
 app.MapRazorComponents<App>()
-    .AddInteractiveServerRenderMode();
+    .AddInteractiveServerRenderMode()
+    .RequireAuthorization();
 
 app.Run();
