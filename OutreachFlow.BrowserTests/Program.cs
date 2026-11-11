@@ -97,6 +97,26 @@ try
             "Live Gmail batch must require explicit owner approval.");
     });
 
+    await Scenario("single-input batch simulation and duplicate-safe replay", async () => {
+        await page.GotoAsync(url + "/prospects");
+        var batch = page.GetByTestId("batch-inquiries");
+        var input = batch.GetByRole(AriaRole.Textbox, new() { Name = "Batch prospect import string" });
+        const string fixture = "Automated Fixture Company | South | https://example.org | batch-fixture@example.org";
+        await input.FillAsync(fixture);
+        await batch.GetByRole(AriaRole.Button, new() { Name = "Run simulated batch" }).ClickAsync();
+        await Visible(batch.GetByText("Batch completed.", new() { Exact = false }));
+        await Visible(batch.GetByText("Automated Fixture Company:", new() { Exact = false }));
+        await batch.GetByRole(AriaRole.Link, new() { Name = "View history" }).ClickAsync();
+        await Visible(page.GetByText("SIMULATED OUTBOUND", new() { Exact = false }));
+        await page.GotoAsync(url + "/prospects");
+        batch = page.GetByTestId("batch-inquiries");
+        await batch.GetByRole(AriaRole.Textbox, new() { Name = "Batch prospect import string" }).FillAsync(fixture);
+        await batch.GetByRole(AriaRole.Button, new() { Name = "Run simulated batch" }).ClickAsync();
+        await Visible(batch.GetByText("Skipped: already recorded company/site or recipient", new() { Exact = false }));
+        await Check(await page.Locator("a.list-row").Filter(new() { HasText = "Automated Fixture Company" }).CountAsync() == 1,
+            "Replaying a batch created another prospect.");
+    });
+
     const string company = "Browser Fixture Company";
     const string entry = company + " | South Charlotte | https://example.org | fixture@example.org";
     await Scenario("prospect import and dedupe", async () => {
