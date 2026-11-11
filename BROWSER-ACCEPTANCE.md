@@ -17,13 +17,13 @@ If `pwsh` is unavailable on Windows, use the installed PowerShell 7 executable o
 
 The suite starts the compiled `OutreachFlow.dll` in a random loopback HTTPS port with a unique temporary working directory and explicit `ConnectionStrings__*` settings. It creates a test-only owner with a nonproduction password, uses example.org fixture addresses, drives real form submissions and Blazor components, and destroys the temporary data after completion.
 
-**No live Gmail or Tavily**: the harness deliberately overrides provider credentials with empty values and sets `Gmail:EnableSending=false`. It does not call public websites, approve outgoing messages, read your mailbox or modify your real `outreachflow.db` databases. Do not configure this harness to use production databases.
+**No live Gmail or Tavily**: the harness deliberately overrides provider credentials with empty values and sets `Gmail:EnableSending=false`. It does not call public websites, **send real emails**, read your mailbox or modify your real `outreachflow.db` databases. The test uses the simulated batch mode and never approves Gmail sending. Do not configure this harness to use production databases.
 
 ## What runs today
 
 1. First-owner creation and authenticated dashboard navigation.
 2. Unconfigured Gmail and Tavily panels, including disabled Discover search.
-3. Prospect import and duplicate prevention.
+3. One-input batch import → draft → simulated initial attempt with idempotent replay, plus standard prospect import and deduplication.
 4. Review finding → draft → **simulated** send → simulated declined reply → suppressed status.
 5. New workspace creation, absence of another workspace's prospects, and return to the original workspace.
 6. Logout and protected-page redirect to sign-in.
