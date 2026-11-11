@@ -22,7 +22,7 @@ else
                 {
                     <div class="notice">@scanSummary</div>
                 }
-                <p class="help">Auto-discovered references are unverified. Select a result below to copy it into the review form, verify the company and process yourself, then explicitly approve an outcome.</p>
+                <p class="help">All automatic discoveries are unverified. A contact or possible portal does not authorize sending; inspect the source, verify relevance, and explicitly approve the recipient and process decision.</p>
             </div>
             <div class="field"><label>Research result</label><select @bind="researchOutcome">
                 <option value="NotReviewed">Not reviewed</option>
@@ -51,7 +51,11 @@ else
                         <a href="@e.SourceUrl" target="_blank" rel="noopener noreferrer">View source</a>
                     }
                     <p>@e.ExcerptOrObservation</p>
-                    @if (!e.IsOfficial && e.SourceTitle != "Research scan: page checked")
+                    @if (e.SourceTitle.StartsWith("Email candidate: ", StringComparison.Ordinal) && p.Attempts == 0 && !p.AutomationPaused && p.Status is not (ProspectStatus.Suppressed or ProspectStatus.Closed))
+                    {
+                        <button class="button" @onclick="() => ApproveContact(e.Id)">Approve as recipient</button>
+                    }
+                    else if (!e.IsOfficial && e.SourceTitle != "Research scan: page checked" && !e.SourceTitle.StartsWith("Email candidate: ", StringComparison.Ordinal))
                     {
                         <button class="button" @onclick="() => UseCandidate(e)">Copy into review form</button>
                     }
@@ -221,7 +225,7 @@ else
         try
         {
             var scan = await Flow.ResearchCompanyAsync(Id);
-            scanSummary = $"Checked {scan.PagesChecked.Count} public HTML page(s) and collected {scan.Candidates.Count} candidate reference(s). {scan.Limitations}";
+            scanSummary = $"Checked {scan.PagesChecked.Count} public HTML page(s); found {scan.Candidates.Count} possible reference(s) and {scan.Contacts.Count} published email candidate(s). {scan.SuggestedReview} {scan.Limitations}";
             alert = "Website scan saved. Review each reference before confirming a research outcome.";
         }
         catch (Exception ex) { alert = "Research could not finish: " + ex.Message; }
@@ -242,6 +246,7 @@ else
         researchOfficial = false;
         alert = "Reference copied. Check the source and select the correct outcome; nothing is approved or sent yet.";
     }
+    private Task ApproveContact(int evidenceId) => Execute(() => Flow.ApproveResearchContactAsync(Id, evidenceId));
     private Task SaveResearch() => Execute(() => Flow.RecordResearchAsync(Id, researchOutcome, researchUrl, researchTitle, researchNote, researchOfficial));
     private Task Draft() => Execute(() => Flow.GenerateDraftAsync(Id));
     private Task SendInitial() => Execute(() => Flow.SimulateInitialSendAsync(Id));

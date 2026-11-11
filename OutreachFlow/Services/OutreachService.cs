@@ -137,6 +137,20 @@ public sealed class OutreachService(IDbContextFactory<OutreachDbContext> factory
                 IsOfficial = false // Site identity and process applicability are NOT verified by a crawl.
             });
         }
+        foreach (var contact in scan.Contacts.Take(30))
+        {
+            var label = "Email candidate: " + contact.Address;
+            if (existing.Any(e => e.SourceTitle.Equals(label, StringComparison.OrdinalIgnoreCase) &&
+                e.SourceUrl.Equals(contact.SourceUrl, StringComparison.OrdinalIgnoreCase))) continue;
+            db.ResearchEvidence.Add(new ResearchEvidence
+            {
+                ProspectId = id,
+                SourceTitle = label[..Math.Min(label.Length, 200)],
+                SourceUrl = contact.SourceUrl[..Math.Min(contact.SourceUrl.Length, 2048)],
+                ExcerptOrObservation = contact.Observation[..Math.Min(contact.Observation.Length, 1200)],
+                CheckedUtc = checkedUtc, IsOfficial = false
+            });
+        }
         foreach (var checkedPage in scan.PagesChecked.Take(6))
         {
             if (existing.Any(e => e.SourceUrl == checkedPage && e.SourceTitle == "Research scan: page checked"))
@@ -155,9 +169,48 @@ public sealed class OutreachService(IDbContextFactory<OutreachDbContext> factory
         }
         p.UpdatedUtc = checkedUtc;
         AddActivity(db, id, "Website scan", $"Checked {scan.PagesChecked.Count} HTML page(s), " +
-            $"found {scan.Candidates.Count} candidate reference(s). Review required. {scan.Limitations}");
+            $"found {scan.Candidates.Count} candidate reference(s) and {scan.Contacts.Count} public contact(s). " +
+            $"Review required. {scan.SuggestedReview} {scan.Limitations}");
         await db.SaveChangesAsync(ct);
         return scan;
+    }
+
+    // An address discovered in public HTML must be selected and explicitly approved by the owner.
+    // Contact selection does NOT approve sending or bypass supplier process review.
+    public async Task ApproveResearchContactAsync(int prospectId, int evidenceId)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        var workspaceId = await access.ActiveWorkspaceIdAsync();
+        var p = await db.Prospects.SingleAsync(x => x.Id == prospectId && x.WorkspaceId == workspaceId);
+        if (p.Attempts > 0 || p.AutomationPaused ||
+            p.Status is ProspectStatus.Suppressed or ProspectStatus.Closed)
+            throw new InvalidOperationException("Contact cannot be changed after outreach or owner takeover.");
+
+        var evidence = await db.ResearchEvidence.AsNoTracking()
+            .SingleAsync(e => e.Id == evidenceId && e.ProspectId == prospectId);
+        const string prefix = "Email candidate: ";
+        if (!evidence.SourceTitle.StartsWith(prefix, StringComparison.Ordinal))
+            throw new InvalidOperationException("Only public email evidence can be selected as a contact.");
+        var address = evidence.SourceTitle[prefix.Length..].Trim();
+        if (!MailAddress.TryCreate(address, out var parsed) ||
+            !parsed.Address.Equals(address, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("The published contact address is invalid.");
+
+        var otherRecipients = await db.Prospects.AsNoTracking()
+            .Where(o => o.WorkspaceId == workspaceId && o.Id != prospectId &&
+                o.ContactEmail.ToLower() == address.ToLower())
+            .Select(o => new { o.Status, o.Attempts }).ToListAsync();
+        if (otherRecipients.Any(o => o.Status == ProspectStatus.Suppressed || o.Attempts > 0))
+            throw new InvalidOperationException("This recipient is suppressed or already has outreach history in your workspace.");
+
+        p.ContactEmail = address;
+        p.DraftSubject = "";
+        p.DraftBody = "";
+        if (p.Status == ProspectStatus.DraftReady) p.Status = ProspectStatus.ReadyToInquire;
+        p.UpdatedUtc = DateTime.UtcNow;
+        AddActivity(db, prospectId, "Contact approved",
+            $"Owner selected a published address from saved research evidence #{evidenceId}. No email sent.");
+        await db.SaveChangesAsync();
     }
 
     public async Task RecordResearchAsync(int id, ResearchOutcome outcome, string url, string title, string note, bool official)
