@@ -1,48 +1,35 @@
-# OutreachFlow build roadmap
+# OutreachFlow roadmap
 
-## Completed in iteration 1
-- Blazor Web App on .NET 10, EF Core with SQLite, four-queue dashboard
-- Fictional demo records, prospect batch import, recorded vendor-process research
-- Inquiry template expansion, simulated initial emails, simulated follow-ups and replies
-- Configurable business profile, template text, and cadence
+**North star:** a research-first business opportunity pipeline. The owner can initially seed 5–10 targets; the system should eventually discover permitted public opportunities, research their application processes and contacts, queue approved outreach, monitor responses, and hand off meaningful decisions. Commercial services and independent software contracting are two configurations of the same business-development product—not a W-2 application bot.
 
-## Added in iteration 2
-- Persistent dry-run `NextStepDueUtc` preview with weekday-aware, timezone-aware calculation
-- Snapshot of follow-up count and cadence when each sequence begins
-- Human ownership / manual activity notes, next action, date, and closure
-- CSV export of pipeline metadata with formula-injection protection
-- Guards for suppressed addresses and addresses with prior simulated outreach
-- Localhost-only access guard + explicit refusal of production startup
-- Self-contained smoke-test console app (run locally with .NET SDK)
+## Already merged in main
+- .NET 10 / Blazor, EF Core + local SQLite, local-first sign-in, workspace membership and data isolation
+- Prospect import, four queues, manual source verification, limited same-site research with SSRF/robots restrictions
+- Draft templates, simulations, bounded weekday sequence preview, opt-out guards, manual notes, CSV export
+- GitHub Actions CI
 
-## Added in iteration 3 — narrow online vendor research
-- Read-only on-demand company-website scanner, bounded to six public HTML pages (not a search engine)
-- Persisted source-backed candidate links and page-check history in existing ResearchEvidence records
-- Explicit owner verification required before a portal/application finding can change outreach routing
-- SSRF safeguards and robots handling, plus offline fake-adapter tests; no schema change
+## Development branches awaiting local review
+- PR #2: owner-confirmed external sends and pasted incoming replies, with audit history (no mailbox connection)
+- **This research PR:** visit relevant public contact pages, find email candidates in visible HTML and mailto references, save URLs/observations, suggest review priority, and allow explicit owner recipient approval. Keeps existing SQLite schema and simulation-only sending.
 
-## Next milestone: dependable data and broader process research
-1. Extend the existing research adapter to support official web search, PDF extraction and third-party supplier portals with review. The current adapter is limited to same-host HTML; external links are suggestions only. No supplier portal signups or auto-submissions.
-2. Replace `EnsureCreated()` with EF Core migrations; support safe schema upgrades and real backups.
-3. Introduce normalized contacts and a global suppression table. Confirm duplicate rules for company, branch and address; keep original research and outreach history intact.
-4. Add deterministic application-task details: application link, requirements, manual completion note, next action, and follow-up date.
-5. Add single-owner authentication, authorization enforcement, CSRF checks, and secure secret management **before** remote hosting.
+## Next: complete a 5–10-company business outreach pilot
+1. Improve on-demand research coverage and category-specific qualification rules: service keywords, locality, vendor process requirements, and contact relevance. Use explicit states *verified process*, *possible process*, *no verified process in checked sources*, and *research blocked/incomplete*. No automatic negative conclusion from a sparse crawl.
+2. Integrate one authorized mailbox provider for actual outgoing and incoming message history, stable provider IDs, opt-out/bounce/complaint suppression and safe webhook/poll processing. Confirm mailbox provider and API suitability first.
+3. Introduce durable queued jobs, idempotent sends, rate/volume limits, sender identity/address, business day scheduling, pause and owner approval of initial campaign. A job must recheck process status, suppression, latest replies and ownership before each send.
+4. Run an approved low-volume pilot for 5–10 actual companies. Record time saved, manual interventions, discovered process accuracy, usable contacts, replies and handoffs.
+5. Connect a compliant keyword search API to feed candidate websites to the *existing* research step; add relevance and deduplication against historical contacts.
 
-## After research and authentication: live mailbox pilot
-1. Identify which provider hosts the user's existing mailbox and whether its APIs and policies permit this type of business inquiry.
-2. Implement a verified provider for inbound, sent-message history and outbound, with provider message IDs and unique send intents.
-3. Verify suppression from explicit opt-outs, bounces/complaints, and negative replies. Maintain accurate commercial-email identity, physical address and opt-out instructions.
-4. Build a persistent BackgroundService worker that leases due jobs, rechecks replies/owner pause/sync freshness just before sending, and holds rather than retries ambiguous accepts.
-5. First pilot must use an approved low-volume batch, all configured compliance fields, clear pause controls, and live observation.
+## Later
+- PDF and third-party vendor portal discovery, with owner verification, limited supported form prefill for manual submission
+- A second **business services** strategy for independent software / .NET / automation contracting, RFPs and subcontract leads
+- Flexible outreach policies and configurable campaigns based on proven differences between the first two workflows
+- Public hosting: schema migrations, restore-tested backups, account recovery/invitations, audit/authorization review, secret management, operational alerts, and provider quotas
+- Subscription billing and self-serve SaaS only after a demonstrably useful and safe engine
 
-## AWS deployment (not now)
-- Compare one-instance Lightsail 1–2 GB vs other providers after measuring real .NET memory use.
-- For a private app: owner login, HTTPS proxy, firewall, DNS, secure cookie configuration, secret management, offsite backups + restore test and budget alerts.
-- Hosted DB remains private. SQLite can suit one running instance; do not run multiple app instances against a network filesystem or rely on a snapshot as the only backup.
-- Email and research API spending will be separately budgeted. Never enable arbitrary background emailing just because hosting is available.
+## Non-goals now
+- Automated W-2 job applications or unapproved LinkedIn/Indeed scraping
+- Autonomous account signups or protected-portal submissions
+- General-purpose no-code designer and open public registration
+- Bulk unsolicited messaging without verified identity, limits and opt-out handling
 
-## In progress — multi-workspace foundations (draft PR)
-- Local ASP.NET Core Identity account setup and login in a separate auth SQLite database.
-- WorkspaceMembership + active workspace selection, server-side prospect/settings scoping.
-- GitHub Actions .NET build and isolation smoke tests.
-- Still needed: migrations, verified browser sign-in, invitations/member management, recovery, durable jobs and production hardening.
+The current app is a localhost-only Development prototype. Existing SQLite databases are retained to prioritize end-to-end functionality; migrations and deployment hardening are delayed, **not optional** before public launch.
