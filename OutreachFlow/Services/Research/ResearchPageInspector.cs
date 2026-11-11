@@ -4,14 +4,21 @@ using System.Text.RegularExpressions;
 namespace OutreachFlow.Services.Research;
 
 /// <summary>
-/// Pure HTML-content quality checks. A successful HTTP status is not evidence that
-/// the intended website content was actually delivered to this read-only client.
+/// Content-quality diagnostics contain only bounded page metadata and matched
+/// allowlisted rule phrases, never arbitrary HTML or authentication data.
 /// </summary>
 public sealed record ResearchPageDiagnostic(
     string Url, string Title, int VisibleCharacters,
     IReadOnlyList<string> MatchedTerms, string Warning)
 {
     public bool IsInconclusive => !string.IsNullOrWhiteSpace(Warning);
+    public int HttpStatusCode { get; init; } = 200;
+    /// <summary>Rule that first classified the HTTP response (not a guess about the site).</summary>
+    public string InitialRuleId { get; init; } = "none";
+    /// <summary>Literal phrase from the scanner's allowlist; not raw website text.</summary>
+    public string MatchedPhrase { get; init; } = "";
+    public string BrowserDecision { get; init; } = "Not requested";
+    public bool IsChallenge => InitialRuleId is "challenge-title" or "challenge-intro";
 }
 
 public static class ResearchPageInspector
@@ -26,6 +33,19 @@ public static class ResearchPageInspector
         @"<title\b[^>]*>(?<value>[\s\S]*?)</title>",
         RegexOptions.Compiled | RegexOptions.IgnoreCase, Timeout);
 
+    private static readonly string[] ChallengeTitles =
+    [
+        "access denied", "just a moment", "attention required",
+        "verify you are human", "request blocked", "security check"
+    ];
+
+    private static readonly string[] ChallengeIntros =
+    [
+        "enable javascript to continue", "verify you are human",
+        "checking your browser before accessing", "your request has been blocked",
+        "unusual traffic from your network", "captcha required"
+    ];
+
     public static ResearchPageDiagnostic Inspect(Uri url, string html, ResearchProfile profile)
     {
         profile = ResearchProfile.Validate(profile);
@@ -36,25 +56,34 @@ public static class ResearchPageInspector
         var matched = profile.PriorityTerms.Concat(profile.ProcessTerms)
             .Where(t => visible.Contains(t, StringComparison.OrdinalIgnoreCase))
             .Distinct(StringComparer.OrdinalIgnoreCase).Take(8).ToArray();
-
         var intro = visible[..Math.Min(350, visible.Length)];
-        var challengeTitle = new[] { "access denied", "just a moment", "attention required",
-            "verify you are human", "request blocked", "security check" }
-            .Any(t => title.Contains(t, StringComparison.OrdinalIgnoreCase));
-        var challengeIntro = new[] { "enable javascript to continue", "verify you are human",
-            "checking your browser before accessing", "your request has been blocked",
-            "unusual traffic from your network", "captcha required" }
-            .Any(t => intro.Contains(t, StringComparison.OrdinalIgnoreCase));
+        // Only the literal *rule phrase* is persisted; never save the raw title
+        // or HTML snippet as a "matched phrase".
+        var titleHit = ChallengeTitles.FirstOrDefault(t =>
+            title.Contains(t, StringComparison.OrdinalIgnoreCase));
+        var introHit = ChallengeIntros.FirstOrDefault(t =>
+            intro.Contains(t, StringComparison.OrdinalIgnoreCase));
         var pathImpliesRelevance = profile.ProcessTerms.Concat(profile.PriorityTerms)
             .Any(t => t.Length >= 4 && url.AbsolutePath.Contains(t, StringComparison.OrdinalIgnoreCase));
-        string warning = challengeTitle || challengeIntro
-            ? "The returned HTML resembles a block/challenge page, not reliable business content."
-            : visible.Length < 120
-                ? "The returned HTML has very little readable text (possibly a JavaScript-only shell)."
-                : pathImpliesRelevance && matched.Length == 0
-                    ? "The URL suggests a relevant page, but its returned HTML lacks the configured terms."
-                    : "";
-        return new ResearchPageDiagnostic(url.AbsoluteUri, title, visible.Length, matched, warning);
+        var rule = titleHit is not null ? "challenge-title" :
+            introHit is not null ? "challenge-intro" :
+            visible.Length < 120 ? "minimal-readable-text" :
+            pathImpliesRelevance && matched.Length == 0 ? "url-content-mismatch" : "none";
+        var warning = rule switch
+        {
+            "challenge-title" or "challenge-intro" =>
+                "The returned HTML resembles a block/challenge page, not reliable business content.",
+            "minimal-readable-text" =>
+                "The returned HTML has very little readable text (possibly a JavaScript-only shell).",
+            "url-content-mismatch" =>
+                "The URL suggests a relevant page, but its returned HTML lacks the configured terms.",
+            _ => ""
+        };
+        return new ResearchPageDiagnostic(url.AbsoluteUri, title, visible.Length, matched, warning)
+        {
+            InitialRuleId = rule,
+            MatchedPhrase = titleHit ?? introHit ?? ""
+        };
     }
 
     private static string Plain(string html) =>
