@@ -18,8 +18,7 @@ public sealed record BrowserResource(int StatusCode, string MediaType, string Bo
 public static class BrowserResearchPolicy
 {
     public static bool MayRender(ResearchPageDiagnostic diagnostic)
-        => diagnostic.IsInconclusive &&
-           !diagnostic.Warning.Contains("block/challenge", StringComparison.OrdinalIgnoreCase);
+        => diagnostic.IsInconclusive && !diagnostic.IsChallenge && diagnostic.HttpStatusCode == 200;
 
     public static bool AllowResource(Uri root, string url, string method)
         => string.Equals(method, "GET", StringComparison.OrdinalIgnoreCase) &&
