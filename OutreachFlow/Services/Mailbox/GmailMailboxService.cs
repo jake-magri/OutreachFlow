@@ -210,8 +210,7 @@ public sealed partial class GmailMailboxService(IConfiguration config, IHttpClie
             HttpCompletionOption.ResponseHeadersRead, ct);
         if (!response.IsSuccessStatusCode)
             throw new InvalidOperationException("Gmail read failed. The authorization may have expired or been revoked.");
-        using var stream = await response.Content.ReadAsStreamAsync(ct);
-        return await JsonDocument.ParseAsync(stream, cancellationToken: ct);
+        return await BoundedJsonAsync(response, ct);
     }
 
     private static async Task<JsonDocument> BoundedJsonAsync(HttpResponseMessage response, CancellationToken ct)
