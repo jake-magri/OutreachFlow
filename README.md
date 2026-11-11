@@ -1,74 +1,42 @@
 # OutreachFlow
 
-**Research-first opportunity discovery, qualification, outreach and human handoff.**
+**Local-first B2B opportunity discovery, source-backed research, prospect tracking and human handoff.**
 
-OutreachFlow is a .NET 10 Blazor Web App with EF Core and local SQLite databases. The product is intended to reduce the repetitive work between finding a business opportunity and reaching a meaningful outcome—not merely to send bulk cold email.
+OutreachFlow is a .NET 10 Blazor Server interactive web app using EF Core, ASP.NET Core Identity, SQLite, Tavily Search, bounded public HTML research, optional Playwright rendering and optional Google/Gmail OAuth. It is an **early local prototype**, not a hosted SaaS product. The currently registered outbound sender is **`DryRunEmail`; no live messages are sent by the app**.
 
-## Product blueprint
+## Current functionality (main, through merged PR #11)
 
-**One engine, configurable business workspaces.** A workspace provides its own business profile, service keywords, geographic preferences, process requirements, contact rules, email templates and follow-up limits. Initial use cases:
+- **Identity and workspaces:** local password login or Google sign-in, explicit link of existing identities, Google-first private workspace registration, Owner/Member membership records, local workspace switching and server-scoped prospect operations. The initial password-owner setup creates a workspace when needed.
+- **Discover:** user-initiated Tavily basic search with per-workspace research profile and geography; two basic searches per click with a shared, persistent 100-requests/month default budget; indexed results are ranked and deterministically triaged into application review, inquiry review, research further or possible false match. The user decides whether to record a result.
+- **Research:** read-only, up to six same-site public HTML pages, bounded requests and robot rules, SSRF and cross-host defenses, source-linked evidence, public email candidates and potential portal links. Experimental browser rendering is explicitly opt-in and may remain inconclusive.
+- **Prospect workflow:** manually verified research decisions, inquiries and template-based drafts, simulation-only sequences, owner-attested actual external sends, manually entered actual replies, recorded follow-up tasks, contact suppression, audit history and CSV metadata export.
+- **Mailbox:** optional, owner-authorized Gmail `gmail.readonly` connection in Windows Development mode; encrypted local refresh token; user-initiated limited inbox review and manual classification/import of candidate inbound replies. This is **not reliable thread-based synchronization** and does not send or modify Gmail messages.
+- **Tests:** an offline .NET smoke-test executable checks discovery/triage, policy constraints, identity provisioning, data isolation, research decisions, simulated/manual message lifecycles, and token encryption. GitHub Actions restores, builds, runs tests and starts the protected localhost app.
 
-- **Magri Exterior Services:** find commercial fleet-service clients, approved vendor/subcontractor programs, bids and partnership contacts; research each company's process before outreach.
-- **Independent software services:** find businesses seeking outsourced .NET / web / automation development, subcontracting, RFPs and IT vendor onboarding. This is **contracting/business development**, not a W-2 job application bot.
+## Current product boundary
 
-Future customers can use the same engine with different service niches. A generic visual workflow builder, SaaS billing and automated job application form submissions are **not** current priorities.
+OutreachFlow is **research-first, not a bulk email or autonomous sales agent**. A search hit, public email address or unofficial link is never treated as a verified invitation to send. Current Gmail candidate matching uses a sender address and manually attested outbound history; it does not establish a Gmail thread, authenticated sender or contractual interest. Always review the message in Gmail and manually confirm relevance before importing it.
 
-### Intended end-to-end workflow
+**Not yet implemented:** live Gmail sending, provider-reconciled sent messages, provider thread IDs, durable job queue, unattended reply polling, bounce/complaint handling, multi-tenant quotas, buyer-first account discovery (see issue #10), production migrations and backups, account recovery, cloud hosting or billing.
 
-1. **Discover:** import companies manually now; later add terms-compliant web-search providers and keyword/geography filters. Sources may be search APIs, user lists or approved vertical integrations.
-2. **Research:** visit a bounded set of permitted public pages; extract source-backed process signals and published business contact candidates. Evaluate requirements relevant to the workspace.
-3. **Decide:** a *verified* official application/portal means **human application handoff**. Where no applicable process is found in the checked sources and a recipient is approved, use the inquiry workflow. **Unknown and inconclusive are not the same as absent.**
-4. **Outreach:** with an authorized real mailbox and an explicitly approved campaign, send a legitimate business inquiry and at most the configured number of follow-ups, within policy and compliance limits. **Not yet automated or connected.**
-5. **Monitor:** reconcile sent messages and actual replies, stop on opt-out/bounce/negative response/owner takeover; handle ambiguous replies conservatively.
-6. **Handoff:** surface warm leads, application tasks, unanswered conversations and uncertain research for human action. Retain an audit trail and source evidence.
+## Source layout
 
-Never assume a person has consented or that a contact address is appropriate simply because it was discovered publicly. No anti-bot circumvention, mass scraping of restricted websites or unattended form submission.
-
-## Current implemented features (main + this research branch)
-
-- Identity-backed first-owner sign-in, multiple local workspaces, and membership-scoped prospects and settings.
-- Manual import, local four-queue dashboard, read-only bounded site scan, evidence review, configurable inquiry templates, simulated outbound/reply sequences, cadence previews, manual tasks, CSV export, and suppression checks.
-- **This research branch:** visits relevant contact pages, extracts public HTML/mailto email candidates with page provenance, and offers **Approve as recipient** after manual verification. Possible vendor links remain unverified until the owner records a sourced process decision. No database schema change.
-- **Separate draft PR #2:** human-confirmed real sends and manually recorded replies; that work is **not yet in main** and is not bundled into this branch.
-
-**Not yet implemented:** automatic keyword web-search sourcing, reliable vendor-process classification without human review, PDF / third-party portal research, live mailbox integration, automatic sending or reply monitoring, durable scheduled jobs, production-grade migrations/backups, and public multi-tenant hosting.
-
-## Configurable research profiles (PR #5)
-
-Open **Settings → Website research profile** to choose a preset or edit priority terms, application/process terms, and excluded phrases. Terms are **literal case-insensitive phrases**, not regular expressions. Process terms prioritize likely official application instructions; priority terms reflect the business niche; exclusions demote irrelevant pages. The contact-extraction regex and network-safety checks remain shared and non-configurable.
-
-Built-in starting profiles include general B2B supplier research, fleet services, construction contracting, independent software contracting, junior developer employment research, and delivery driving. Employment profiles provide **research triage only**, not automated applications or messages. The scanner remains a six-page, read-only crawl of a company website supplied by the owner. No Google/LinkedIn/Indeed search API is connected.
-
-Profiles are saved per workspace as **local JSON files** in `research-profiles/workspace-<id>.json`, ignored by Git. This intentionally requires **no EF migration** and does not change either existing SQLite database. Save files along with both SQLite databases when backing up. Invalid/corrupt profile files fail closed rather than silently resetting to defaults.
-
-## Experimental JavaScript-rendered research (PR #6)
-
-The normal **Research company website** action remains unchanged. A separate **Render with browser (experimental)** button can attempt a three-second JavaScript render on pages that returned insufficient HTML content. The browser uses a fresh isolated context and same-site, GET-only resource interception routed through the existing protected C# fetcher. It is deliberately not an anti-bot bypass; blocked/challenge pages remain manual review.
-
-Local Chromium installation is required. See [BROWSER-RESEARCH-PILOT.md](BROWSER-RESEARCH-PILOT.md) for Windows setup, comparison tests, security limits and the City of Charlotte supplier-registration pilot. No new SQLite tables or AWS resources are introduced.
-
-## Search-index discovery (PR #7)
-
-The **Discover** page adds **on-demand Tavily basic web searches** using each workspace's configured research profile and service area. No LLM or agent API is invoked; search queries are generated deterministically. Results are ranked by keyword relevance, deduplicated and URL-screened, and shown as **unverified index candidates**. The owner must inspect a result and click **Add to prospects for verification**; importing never authorizes an email or classifies an official process. The existing research scanner and manually verified process selection remain the next steps.
-
-**Operator pays for and controls search; workspace users never enter API keys.** Local development uses a free Tavily Researcher account (currently 1,000 API credits/month; basic search costs one credit, subject to provider policy). Search is disabled when the server does not have a key. Configure it in .NET development user secrets, not Git:
-
-```powershell
-dotnet user-secrets set "Tavily:ApiKey" "<your operator-only key>" --project OutreachFlow
-dotnet run --project OutreachFlow
-```
-
-Treat your key as a secret: command-line values can enter shell history; use trusted local credential-entry procedures. An alternative is a process-only `TAVILY_API_KEY` environment variable (do not commit `.env`, keys or screenshots). The server does not return the key to the browser.
-
-**Cost controls:** one click makes at most two basic searches and requests up to five results each. The application reserves each request against a shared, durable UTC-month ledger *before* making the provider call. The default cap is 100 attempts/month across all workspaces; the operator may set `Search:MonthlyRequestLimit` (1–1,000). Failed requests count conservatively, and a corrupt usage ledger **blocks searches rather than silently resetting the budget**. `search-usage/search-requests.json` is local, gitignored, and should be backed up with your SQLite DB and `research-profiles` folder. This is a local single-process prototype; distributed production billing and per-tenant quotas require further work.
-
-**Provider content is ephemeral:** titles and snippets are displayed for review but not saved as evidence. When importing, only the URL, truncated title and an unverified origin label are placed into the existing prospect record. Do not treat relevance scores as source authenticity, contract availability or approval to contact the organization. A blocked live site remains **inconclusive**, even if indexed results are visible.
-
-See [DISCOVERY-PILOT.md](DISCOVERY-PILOT.md) for acceptance tests, metrics and provider constraints. No new database tables, migrations, AWS services or LLM subscriptions are introduced.
+| Area | Responsibility |
+| --- | --- |
+| `OutreachFlow/Program.cs` | Startup, DI, local-only protections, service registration |
+| `Models/`, `Data/` | Workspace, prospect and activity models; separate business and Identity EF contexts |
+| `Services/AccountEndpoints.cs`, `GoogleSignInEndpoints.cs`, `GoogleUserProvisioner.cs` | Local login, Google identity and workspace provisioning |
+| `Services/Mailbox/` | Google OAuth connection, local protected token store, read-only Gmail review |
+| `Services/Discovery/` | Tavily requests, search budget, query planning, triage, reviewed imports |
+| `Services/Research/` | Safe public-site HTML analysis, browser experiment, contacts and evidence |
+| `Services/OutreachService.cs` | Prospect state transitions, drafts, manual/simulated history, exports |
+| `Components/Pages/` | Dashboard, prospects, discovery, settings, mailbox |
+| `OutreachFlow.SmokeTests/` | Offline regression suite |
+| `.github/workflows/build.yml` | CI and localhost startup check |
 
 ## Run locally
 
-Prerequisites: .NET 10 SDK, Git, and Windows/Visual Studio or another supported .NET environment.
+Prerequisites: .NET 10 SDK, Visual Studio or a terminal, and a trusted development HTTPS certificate. Gmail's current connection implementation is Windows-only due to DPAPI key protection.
 
 ```powershell
 git switch main
@@ -76,30 +44,41 @@ git pull --ff-only origin main
 dotnet restore OutreachFlow.slnx
 dotnet build OutreachFlow.slnx
 dotnet run --project OutreachFlow.SmokeTests
+dotnet dev-certs https --trust
 dotnet run --project OutreachFlow
 ```
 
-Open **https://localhost:7117** (the project also listens on HTTP port 5117, which redirects to HTTPS). For a fresh local installation, use **/account/setup** to register the first owner; subsequent access is through **/account/login**. The setup route is intentionally unavailable after an account exists. If the HTTPS development certificate is untrusted: `dotnet dev-certs https --trust`.
+Visit `https://localhost:7117`. On a fresh database, set up the first password owner at `/account/setup`, or configure Google and use **Continue with Google** for a new private workspace. To keep an existing local account's data, sign in with its password and **link** Google under Workspaces before using Google login for that account. Never merge users automatically by email.
 
-To test this research change after CI passes, use `git fetch origin` and `git switch --track origin/feature/research-triage-contact-discovery` (or `git switch feature/research-triage-contact-discovery` if already present).
+### Optional services
 
-**Do not deploy this prototype publicly.** It fails closed outside Development and blocks non-loopback requests. The app performs only on-demand read-only website checks when explicitly requested. The existing sending controls are simulations. Do not enter real mail provider secrets until a reviewed connection is implemented.
+- Tavily: `dotnet user-secrets set "Tavily:ApiKey" "YOUR_KEY" --project OutreachFlow`.
+- Google sign-in and Gmail: configure an OAuth 2.0 **Web application** with `https://localhost:7117/signin-google` and `https://localhost:7117/mailbox/google/callback`, then follow [MAILBOX-PILOT.md](MAILBOX-PILOT.md). Basic Google identity scopes and Gmail read access require separate consent.
+- Google `gmail.readonly` is a restricted OAuth scope; a public SaaS release requires additional provider verification/security planning. The current Gmail integration has **no** `gmail.send` permission.
+- Optional browser research: see [BROWSER-RESEARCH-PILOT.md](BROWSER-RESEARCH-PILOT.md).
 
-## Workspace contact defaults
+Secrets must remain in local development secret storage; never commit client secrets, refresh tokens, screenshots containing tokens, or local business records.
 
-New workspace model instances no longer contain any specific person's email address, phone number, or business identity. Set the correct sender, service, location and outreach templates for each workspace in **Settings** before using it. Existing records in local SQLite are unaffected by changes to C# model defaults. No data reset or EF migration is required.
+## Storage and safety
 
-## Local storage
+- `outreachflow.db`: workspaces, prospects, research evidence, messages and activities.
+- `outreachflow.auth.db`: Identity users, Google logins, workspace memberships.
+- `research-profiles/`: per-workspace configuration JSON.
+- `search-usage/`: app-wide on-disk Tavily budget ledger.
+- `mailbox-connections/`: encrypted workspace Gmail refresh tokens.
+- `mailbox-keys/`: DataProtection key ring, protected with current-user Windows DPAPI.
 
-`outreachflow.db` stores workspaces, prospects, research evidence, simulated messages and activities. `outreachflow.auth.db` separately holds ASP.NET Core Identity users and workspace memberships. Both are relative SQLite paths created where the app runs. Both databases currently use EF Core `EnsureCreated()`, not production migrations.
+**Stop the app before taking consistent backups** of both SQLite databases (including any WAL/SHM files) and local JSON/profile/key storage. DPAPI-protected keys and tokens are not portable to a different Windows user/machine without a deliberate migration/reconnect process. No automated restore-tested backup exists. Both EF contexts currently use `EnsureCreatedAsync`, not migrations. Do not delete databases to try a new branch.
 
-Stop the process and **back up both files plus any WAL/SHM companions** before changing branches or upgrading. Git excludes local `*.db` data. There is no hosted database, running background worker, or AWS spend.
+The app fails closed outside ASP.NET Core Development and refuses non-loopback requests. It is **not** safe to expose publicly or deploy using `Dockerfile.future`.
 
-## Development and safety
+## Project management and acceptance
 
-- Run offline tests with `dotnet run --project OutreachFlow.SmokeTests`; GitHub Actions builds and smoke-tests pull requests.
-- Use a dedicated PR branch, have CI pass, then exercise the workflow in a browser before merging.
-- Source-backed research is provisional and can contain mistakes; robots restrictions, private-network blocks, read limits and same-site restrictions are intentional.
-- Production work still requires schema migrations, backup/restore tests, true tenant-level authorization review, secrets handling, email consent/suppression controls, idempotent jobs, monitoring, and recovery.
+- [ROADMAP.md](ROADMAP.md): current milestones and definitions of done.
+- [AUDIT-2026-11-11.md](AUDIT-2026-11-11.md): repository-wide code audit, confirmed findings and prioritized risks.
+- [TEST-CHECKLIST.md](TEST-CHECKLIST.md): manual acceptance checklist.
+- [TRIAGE-PILOT.md](TRIAGE-PILOT.md): pilot classification and manual route-approval tests.
+- [MAILBOX-PILOT.md](MAILBOX-PILOT.md): Google OAuth and read-only mailbox pilot.
+- [GitHub issues](https://github.com/jake-magri/OutreachFlow/issues): planned work and tracked technical debt.
 
-See [ROADMAP.md](ROADMAP.md), [RESEARCH-SETUP.md](RESEARCH-SETUP.md) (historical iteration notes), and [MULTI-WORKSPACE-SETUP.md](MULTI-WORKSPACE-SETUP.md).
+The historical PR-specific pilot notes describe how features were built at the time and are **not** the current product readiness checklist.
