@@ -22,6 +22,17 @@ static async Task MustReject(Func<Task> action, string scenario)
     throw new Exception($"FAILED: {scenario}");
 }
 
+// New workspaces must never inherit another owner's personal or business contact details.
+var blankWorkspace = new Workspace();
+Check(blankWorkspace.BusinessName == "New workspace" &&
+      string.IsNullOrWhiteSpace(blankWorkspace.SenderName) &&
+      string.IsNullOrWhiteSpace(blankWorkspace.SenderEmail) &&
+      string.IsNullOrWhiteSpace(blankWorkspace.SenderPhone) &&
+      string.IsNullOrWhiteSpace(blankWorkspace.ServiceDescription) &&
+      string.IsNullOrWhiteSpace(blankWorkspace.ServiceArea) &&
+      string.IsNullOrWhiteSpace(blankWorkspace.TargetDescription),
+    "new workspace defaults contain no personal or niche-specific business contact data");
+
 // NY daylight-saving time starts on Sunday, March 8, 2026.
 var thursday = new DateTime(2026, 3, 6, 15, 0, 0, DateTimeKind.Utc);
 var monday = BusinessCalendar.AddBusinessDays(thursday, 1, "America/New_York", 9);
