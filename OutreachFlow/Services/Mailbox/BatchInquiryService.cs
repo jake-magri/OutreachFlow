@@ -38,12 +38,6 @@ public sealed class BatchInquiryService(
         CancellationToken ct = default)
     {
         var rows = Parse(input);
-        if (mode == BatchInquiryMode.Gmail)
-        {
-            var current = await PreviewAsync(user, input, ct);
-            if (string.IsNullOrWhiteSpace(approvalHash) || current.Hash != approvalHash)
-                throw new InvalidOperationException("The reviewed batch or message template changed. Review the exact messages again.");
-        }
         await using var auth = await accounts.CreateDbContextAsync(ct);
         var workspaceId = await MailboxOwner.RequireAsync(user, auth, ct);
         await using var db = await factory.CreateDbContextAsync(ct);
@@ -65,6 +59,12 @@ public sealed class BatchInquiryService(
         if (mode == BatchInquiryMode.Gmail && !approved)
             throw new InvalidOperationException("Live Gmail requires owner approval of the complete batch, recipients, official-process decisions and saved message template.");
         var rows = Parse(input);
+        if (mode == BatchInquiryMode.Gmail)
+        {
+            var current = await PreviewAsync(user, input, ct);
+            if (string.IsNullOrWhiteSpace(approvalHash) || current.Hash != approvalHash)
+                throw new InvalidOperationException("The reviewed batch or message template changed. Review the exact messages again.");
+        }
         await using var auth = await accounts.CreateDbContextAsync(ct);
         var workspaceId = await MailboxOwner.RequireAsync(user, auth, ct);
 
