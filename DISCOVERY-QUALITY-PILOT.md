@@ -1,4 +1,6 @@
-# PR #8 — Discovery quality and source-linked process evidence
+# Historical PR #8 — Discovery quality and source-linked process evidence
+
+> **Historical development benchmark.** PR #8 is merged and subsequent classification fixes landed in PR #9. For current product status see [ROADMAP.md](ROADMAP.md).
 
 ## Purpose
 
