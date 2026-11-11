@@ -22,6 +22,26 @@ static async Task MustReject(Func<Task> action, string scenario)
     throw new Exception($"FAILED: {scenario}");
 }
 
+// Explicit developer-only live probe: same downloader, user-agent, redirect/robots rules
+// as the app. Logs only bounded public page metadata, not full HTML or script URLs.
+if (Environment.GetEnvironmentVariable("OUTREACHFLOW_LIVE_CITY_PROBE") == "1")
+{
+    const string cityUrl =
+        "https://www.charlottenc.gov/Growth-and-Development/Doing-Business/Supplier-Registration";
+    try
+    {
+        using var liveResearcher = new OfficialSiteResearcher();
+        var liveProbe = await liveResearcher.ProbeAsync(cityUrl);
+        Console.WriteLine("LIVE CITY HTTP PROBE: " +
+            System.Text.Json.JsonSerializer.Serialize(liveProbe));
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine("LIVE CITY HTTP PROBE INCONCLUSIVE: " +
+            ex.GetType().Name + "; " + ex.Message[..Math.Min(ex.Message.Length, 180)]);
+    }
+}
+
 // Browser-render path is explicitly opt-in and must never follow unsafe destinations.
 var browserRoot = new Uri("https://www.example.org/");
 Check(BrowserResearchPolicy.AllowResource(browserRoot,
