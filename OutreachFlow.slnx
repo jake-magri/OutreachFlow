@@ -2,4 +2,5 @@
   <Project Path="OutreachFlow/OutreachFlow.csproj" />
   <Project Path="OutreachFlow.SmokeTests/OutreachFlow.SmokeTests.csproj" />
   <Project Path="OutreachFlow.RecoveryCli/OutreachFlow.RecoveryCli.csproj" />
+  <Project Path="OutreachFlow.BrowserTests/OutreachFlow.BrowserTests.csproj" />
 </Solution>
