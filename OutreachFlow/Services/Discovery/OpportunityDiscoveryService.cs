@@ -127,6 +127,7 @@ public sealed class OpportunityDiscoveryService(
             DiscoveryRoute.InquiryReview => ProspectStatus.NeedsAction,
             _ => ProspectStatus.ResearchNeeded
         };
+        await using var transaction = await db.Database.BeginTransactionAsync(ct);
         var now = DateTime.UtcNow;
         var prospect = new Prospect
         {
@@ -141,6 +142,7 @@ public sealed class OpportunityDiscoveryService(
             CreatedUtc = now
         };
         db.Prospects.Add(prospect);
+        await db.SaveChangesAsync(ct); // Obtain generated key within transaction.
         // Never store an indexed snippet as verified instructions, and do not
         // copy the search result URL into the confirmed ProcessUrl field.
         var observation = $"Indexed search snippet only (unverified). " +
@@ -163,8 +165,8 @@ public sealed class OpportunityDiscoveryService(
                 "No process, recipient, or sending approval was granted.",
             OccurredUtc = now
         });
-        // EF Core resolves the new temporary prospect key on SaveChanges.
         await db.SaveChangesAsync(ct);
+        await transaction.CommitAsync(ct);
         return new DiscoveryRouteResult(prospect.Id, true);
     }
 }
