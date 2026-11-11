@@ -1,0 +1,27 @@
+name: Build and smoke tests
+
+on:
+  push:
+    branches: [main, "feature/**"]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+      - name: Set up .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - name: Restore
+        run: dotnet restore OutreachFlow.slnx
+      - name: Build
+        run: dotnet build OutreachFlow.slnx --no-restore --configuration Release
+      - name: Smoke tests
+        run: dotnet run --project OutreachFlow.SmokeTests/OutreachFlow.SmokeTests.csproj --configuration Release --no-build
