@@ -48,7 +48,7 @@ public static class AccountEndpoints
         {
             var google = GoogleSignInEndpoints.Configured(config)
                 ? "<p><a href='/account/google/login'>Continue with Google</a></p>" +
-                  "<small>First link your Google account from Workspaces after signing in with your existing password.</small>"
+                  "<small>New here? Continue with Google creates your private workspace. Existing password users should link Google once from Workspaces to retain their data.</small>"
                 : "";
             var page = Page(ctx, xsrf, "Sign in to OutreachFlow", "/account/login",
                 "<label>Email <input name='email' type='email' autocomplete='username' required /></label>" +
@@ -182,12 +182,13 @@ public static class AccountEndpoints
             ? "<p role='alert'>Sign-in failed. Check your credentials or wait before retrying.</p>" : "";
         var googleStatus = ctx.Request.Query["google"].ToString() switch
         {
-            "notlinked" => "<p role='alert'>This Google account is not linked. Sign in with your existing password, then link it under Workspaces.</p>",
+            "notlinked" => "<p role='alert'>An account already uses this email. Sign in with your existing password and link Google from Workspaces; we never merge accounts based on email alone.</p>",
             "failed" => "<p role='alert'>Google sign-in or linking failed. Try again.</p>",
             "unavailable" => "<p role='alert'>Google sign-in has not been configured.</p>",
             "alreadyused" => "<p role='alert'>That Google account is already linked to another account.</p>",
             "locked" => "<p role='alert'>This account is locked. Try again later.</p>",
             "linked" => "<p>Google sign-in is linked. You can now use Continue with Google at login.</p>",
+            "unverified" => "<p role='alert'>Google did not confirm a verified email address. Account registration was not completed.</p>",
             _ => ""
         };
         return Html(title, error + googleStatus +
