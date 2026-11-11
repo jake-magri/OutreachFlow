@@ -68,6 +68,32 @@ try
 }
 finally { if (Directory.Exists(profileDirectory)) Directory.Delete(profileDirectory, recursive: true); }
 
+// A 200 OK status can return misleading HTML. Test quality checks without external HTTP.
+var generalResearch = ResearchProfileCatalog.Default();
+var suspectUri = new Uri("https://www.example.org/doing-business/supplier-registration");
+var shell = ResearchPageInspector.Inspect(suspectUri,
+    "<html><head><title>Supplier Registration</title></head><body><div id='app'></div><script>renderApp()</script></body></html>",
+    generalResearch);
+Check(shell.IsInconclusive && shell.VisibleCharacters < 120,
+    "JavaScript-only HTML shell cannot be treated as a complete researched page");
+var challenge = ResearchPageInspector.Inspect(suspectUri,
+    "<html><title>Just a moment...</title><body>Checking your browser before accessing the site. Verify you are human.</body></html>",
+    generalResearch);
+Check(challenge.IsInconclusive && challenge.Warning.Contains("challenge", StringComparison.OrdinalIgnoreCase),
+    "HTTP 200 challenge page is classified as incomplete");
+var realPage = ResearchPageInspector.Inspect(suspectUri,
+    "<html><head><title>Supplier Registration</title></head><body><main><h1>Supplier registration</h1>" +
+    "<p>Vendors interested in doing business should complete the supplier registration process.</p>" +
+    "<p>Register your business using the official vendor portal and review requirements before submission.</p>" +
+    "</main></body></html>", generalResearch);
+Check(!realPage.IsInconclusive && realPage.MatchedTerms.Any(),
+    "meaningful supplier registration HTML passes content quality assessment");
+var mismatchedPage = ResearchPageInspector.Inspect(suspectUri,
+    "<html><head><title>Welcome</title></head><body><main>" + new string('x', 200) +
+    "</main></body></html>", generalResearch);
+Check(mismatchedPage.IsInconclusive,
+    "a supplier-registration URL with unrelated HTML requires manual review");
+
 // NY daylight-saving time starts on Sunday, March 8, 2026.
 var thursday = new DateTime(2026, 3, 6, 15, 0, 0, DateTimeKind.Utc);
 var monday = BusinessCalendar.AddBusinessDays(thursday, 1, "America/New_York", 9);
