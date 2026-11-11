@@ -27,11 +27,11 @@ jobs:
           dotnet ef migrations add InitialBusinessSchema --context OutreachDbContext \
             --project OutreachFlow/OutreachFlow.csproj \
             --startup-project OutreachFlow/OutreachFlow.csproj \
-            --output-dir Data/Migrations/Business --no-build=false
+            --output-dir Data/Migrations/Business
           dotnet ef migrations add InitialIdentitySchema --context AccountDbContext \
             --project OutreachFlow/OutreachFlow.csproj \
             --startup-project OutreachFlow/OutreachFlow.csproj \
-            --output-dir Data/Migrations/Identity --no-build=false
+            --output-dir Data/Migrations/Identity
           echo "Generated source:"
           find OutreachFlow/Data/Migrations -type f | sort
       - name: Emit source artifacts for controlled review and commit
