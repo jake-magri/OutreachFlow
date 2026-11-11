@@ -8,6 +8,7 @@ using OutreachFlow.Components;
 using OutreachFlow.Data;
 using OutreachFlow.Services;
 using OutreachFlow.Services.Research;
+using OutreachFlow.Services.Discovery;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -42,6 +43,18 @@ builder.Services.AddDbContextFactory<OutreachDbContext>(options =>
         ?? "Data Source=outreachflow.db"));
 builder.Services.AddSingleton<IResearchProfileStore>(_ =>
     new JsonResearchProfileStore(Path.Combine(builder.Environment.ContentRootPath, "research-profiles")));
+builder.Services.AddSingleton<ISearchUsageBudget>(_ =>
+    new LocalSearchUsageBudget(Path.Combine(builder.Environment.ContentRootPath, "search-usage"),
+        builder.Configuration.GetValue<int?>("Search:MonthlyRequestLimit") ?? 100));
+builder.Services.AddHttpClient<IWebSearchProvider, TavilySearchProvider>(client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(12);
+}).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+{
+    AllowAutoRedirect = false,
+    UseProxy = false
+});
+builder.Services.AddScoped<OpportunityDiscoveryService>();
 builder.Services.AddScoped<OutreachService>();
 builder.Services.AddSingleton<IHtmlBrowserRenderer, PlaywrightHtmlBrowserRenderer>();
 builder.Services.AddSingleton<ICompanyResearcher, OfficialSiteResearcher>();
