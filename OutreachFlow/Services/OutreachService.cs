@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Data.Sqlite;
 using System.Net.Mail;
 using System.Text;
 using OutreachFlow.Data;
@@ -331,6 +332,9 @@ public sealed class OutreachService(IDbContextFactory<OutreachDbContext> factory
     public async Task RecordExternalInitialSendAsync(int id)
     {
         await using var db = await factory.CreateDbContextAsync();
+        await db.Database.OpenConnectionAsync();
+        using var transaction = ((SqliteConnection)db.Database.GetDbConnection()).BeginTransaction(deferred: false);
+        await using var enlisted = await db.Database.UseTransactionAsync(transaction);
         var workspaceId = await access.ActiveWorkspaceIdAsync();
         var p = await db.Prospects.SingleAsync(x => x.Id == id && x.WorkspaceId == workspaceId);
         if (p.Status != ProspectStatus.DraftReady || p.Attempts != 0 || p.AutomationPaused ||
@@ -362,6 +366,7 @@ public sealed class OutreachService(IDbContextFactory<OutreachDbContext> factory
         AddActivity(db, id, "MANUAL SEND CONFIRMED",
             "Owner confirmed sending the reviewed inquiry in an external mailbox. No email was sent by OutreachFlow.");
         await db.SaveChangesAsync();
+        await transaction.CommitAsync();
     }
 
     // An actual reply pasted by the owner; never claims automatic mailbox synchronization.
@@ -407,6 +412,9 @@ public sealed class OutreachService(IDbContextFactory<OutreachDbContext> factory
     public async Task SimulateInitialSendAsync(int id)
     {
         await using var db = await factory.CreateDbContextAsync();
+        await db.Database.OpenConnectionAsync();
+        using var transaction = ((SqliteConnection)db.Database.GetDbConnection()).BeginTransaction(deferred: false);
+        await using var enlisted = await db.Database.UseTransactionAsync(transaction);
         var workspaceId = await access.ActiveWorkspaceIdAsync();
         var p = await db.Prospects.SingleAsync(x => x.Id == id && x.WorkspaceId == workspaceId);
         if (p.Status != ProspectStatus.DraftReady || p.Attempts != 0 || p.AutomationPaused || string.IsNullOrWhiteSpace(p.DraftBody))
@@ -428,6 +436,7 @@ public sealed class OutreachService(IDbContextFactory<OutreachDbContext> factory
             p.SequenceTimeZoneId, p.SequenceStartHour);
         AddActivity(db, id, "SIMULATED OUTBOUND", result.Detail);
         await db.SaveChangesAsync();
+        await transaction.CommitAsync();
     }
 
     public async Task SimulateFollowupAsync(int id)
@@ -554,6 +563,8 @@ public sealed class OutreachService(IDbContextFactory<OutreachDbContext> factory
 
     private static async Task GuardRecipientAsync(OutreachDbContext db, Prospect p)
     {
+        if (await db.OutboundDispatches.AnyAsync(d => d.ProspectId == p.Id))
+            throw new InvalidOperationException("A Gmail dispatch already exists. Review its delivery record before further outreach.");
         if (!MailAddress.TryCreate(p.ContactEmail, out var recipient) || recipient.Address != p.ContactEmail)
             throw new InvalidOperationException("A valid business recipient email is needed even for a simulation.");
         var others = await db.Prospects.AsNoTracking()

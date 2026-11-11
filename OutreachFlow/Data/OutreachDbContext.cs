@@ -12,6 +12,8 @@ public sealed class OutreachDbContext(DbContextOptions<OutreachDbContext> option
     public DbSet<ActivityEntry> Activities => Set<ActivityEntry>();
     public DbSet<ProviderMessage> ProviderMessages => Set<ProviderMessage>();
 
+    public DbSet<OutboundDispatch> OutboundDispatches => Set<OutboundDispatch>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.Entity<Prospect>().HasIndex(p => new { p.WorkspaceId, p.CompanyName, p.SiteName });
@@ -35,6 +37,14 @@ public sealed class OutreachDbContext(DbContextOptions<OutreachDbContext> option
         provider.ToTable(t => t.HasCheckConstraint("CK_ProviderMessages_Identity",
             "\"Provider\" = 'gmail' AND length(trim(\"MailboxEmail\")) > 0 " +
             "AND length(trim(\"MessageId\")) > 0 AND length(trim(\"ThreadId\")) > 0"));
+        var dispatch = modelBuilder.Entity<OutboundDispatch>();
+        dispatch.HasIndex(d => d.ProspectId).IsUnique();
+        dispatch.HasIndex(d => d.RfcMessageId).IsUnique();
+        dispatch.Property(d => d.From).UseCollation("NOCASE");
+        dispatch.HasOne<Prospect>().WithMany().HasForeignKey(d => new { d.WorkspaceId, d.ProspectId })
+            .HasPrincipalKey(p => new { p.WorkspaceId, p.Id }).OnDelete(DeleteBehavior.Restrict);
+        dispatch.ToTable(t => t.HasCheckConstraint("CK_OutboundDispatch_State",
+            "\"State\" IN ('Sending','Sent','Uncertain','Rejected')"));
         base.OnModelCreating(modelBuilder);
     }
 }

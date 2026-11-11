@@ -1,0 +1,78 @@
+@using OutreachFlow.Services.Mailbox
+@using Microsoft.AspNetCore.Components.Authorization
+@inject ApprovedSendService Sender
+@inject GmailMailboxService Gmail
+@inject AuthenticationStateProvider Authentication
+
+@if (dispatch is not null)
+{
+    <hr />
+    <h3>Gmail delivery record</h3>
+    <p><strong>@dispatch.State</strong> · @dispatch.Result</p>
+    <p class="help">From @dispatch.From · To @dispatch.To<br />Approved @dispatch.ApprovedUtc.ToString("u")</p>
+    @if (dispatch.State != "Sent")
+    {
+        <p class="help">This inquiry is locked against repeat sending. A missing Sent result does not establish that Gmail failed to send it.</p>
+        <button class="button" disabled="@busy" @onclick="Reconcile">Check Gmail Sent mail</button>
+    }
+}
+else if (owner && Eligible && Gmail.SendingAvailable)
+{
+    <hr />
+    <h3>Send an approved inquiry</h3>
+    @if (preview is null)
+    {
+        <p class="help">Review the sender, recipient, research decision and exact message before authorizing a real email.</p>
+        <button class="button" disabled="@busy" @onclick="Preview">Review Gmail send</button>
+    }
+    else
+    {
+        <p><strong>From:</strong> @preview.From<br /><strong>To:</strong> @preview.To</p>
+        <strong>@preview.Subject</strong>
+        <pre style="white-space:pre-wrap;overflow-wrap:anywhere">@preview.Body</pre>
+        <label><input type="checkbox" @bind="confirmed" disabled="@busy" /> I verified this recipient and research decision, and approve sending this exact inquiry now.</label>
+        <div class="actions">
+            <button class="button primary" disabled="@(busy || !confirmed)" @onclick="Send">@(busy ? "Checking delivery…" : "Send approved inquiry via Gmail")</button>
+            <button class="button" disabled="@busy" @onclick="Cancel">Cancel review</button>
+        </div>
+        <p class="help">One initial inquiry. No automatic follow-ups or retries. Weekday sending hours and mailbox limits apply.</p>
+    }
+}
+@if (!string.IsNullOrWhiteSpace(notice)) { <p class="notice" role="status">@notice</p> }
+@code {
+    [Parameter] public bool Eligible { get; set; }
+    [Parameter] public int ProspectId { get; set; }
+    [Parameter] public EventCallback Changed { get; set; }
+    private int loadedId;
+    private bool owner, busy, confirmed;
+    private string notice = "";
+    private SendPreview? preview;
+    private OutboundDispatch? dispatch;
+    protected override async Task OnParametersSetAsync()
+    {
+        if (loadedId != ProspectId) { Cancel(); loadedId = ProspectId; }
+        try { dispatch = await Sender.GetAsync((await Authentication.GetAuthenticationStateAsync()).User, ProspectId); owner = true; }
+        catch (UnauthorizedAccessException) { owner = false; dispatch = null; }
+    }
+    private void Cancel() { preview = null; confirmed = false; notice = ""; }
+    private async Task Preview() => await Run(async () => {
+        preview = await Sender.PreviewAsync((await Authentication.GetAuthenticationStateAsync()).User, ProspectId);
+        confirmed = false;
+    });
+    private async Task Send() => await Run(async () => {
+        if (preview is null || !confirmed) return;
+        dispatch = await Sender.SendAsync((await Authentication.GetAuthenticationStateAsync()).User, preview, confirmed);
+        preview = null; confirmed = false;
+    });
+    private async Task Reconcile() => await Run(async () => {
+        dispatch = await Sender.ReconcileAsync((await Authentication.GetAuthenticationStateAsync()).User, ProspectId);
+    });
+    private async Task Run(Func<Task> action)
+    {
+        if (busy) return;
+        busy = true; notice = "";
+        try { await action(); }
+        catch (Exception ex) { notice = ex is UnauthorizedAccessException ? "Workspace ownership changed. Reload before continuing." : ex.Message; }
+        finally { busy = false; await Changed.InvokeAsync(); }
+    }
+}

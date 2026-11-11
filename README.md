@@ -2,22 +2,22 @@
 
 **Local-first B2B opportunity discovery, source-backed research, prospect tracking and human handoff.**
 
-OutreachFlow is a .NET 10 Blazor Server interactive web app using EF Core, ASP.NET Core Identity, SQLite, Tavily Search, bounded public HTML research, optional Playwright rendering and optional Google/Gmail OAuth. It is an **early local prototype**, not a hosted SaaS product. The currently registered outbound sender is **`DryRunEmail`; no live messages are sent by the app**.
+OutreachFlow is a .NET 10 Blazor Server interactive web app using EF Core, ASP.NET Core Identity, SQLite, Tavily Search, bounded public HTML research, optional Playwright rendering and optional Google/Gmail OAuth. It is an **early local prototype**, not a hosted SaaS product. Simulation uses **`DryRunEmail`**. A separate, disabled-by-default Windows pilot can send one owner-approved Gmail inquiry with durable delivery tracking. See [GMAIL-SENDING-PILOT.md](GMAIL-SENDING-PILOT.md).
 
-## Current functionality (main, through merged PR #11)
+## Current functionality
 
 - **Identity and workspaces:** local password login or Google sign-in, explicit link of existing identities, Google-first private workspace registration, Owner/Member membership records, local workspace switching and server-scoped prospect operations. The initial password-owner setup creates a workspace when needed.
 - **Discover:** user-initiated Tavily basic search with per-workspace research profile and geography; two basic searches per click with a shared, persistent 100-requests/month default budget; indexed results are ranked and deterministically triaged into application review, inquiry review, research further or possible false match. The user decides whether to record a result.
 - **Research:** read-only, up to six same-site public HTML pages, bounded requests and robot rules, SSRF and cross-host defenses, source-linked evidence, public email candidates and potential portal links. Experimental browser rendering is explicitly opt-in and may remain inconclusive.
 - **Prospect workflow:** manually verified research decisions, inquiries and template-based drafts, simulation-only sequences, owner-attested actual external sends, manually entered actual replies, recorded follow-up tasks, contact suppression, audit history and CSV metadata export.
-- **Mailbox:** optional, owner-authorized Gmail `gmail.readonly` connection in Windows Development mode; encrypted local refresh token; user-initiated limited inbox review and manual classification/import of candidate inbound replies. This is **not reliable thread-based synchronization** and does not send or modify Gmail messages.
+- **Mailbox:** optional, owner-authorized Gmail `gmail.readonly` connection in Windows Development mode; encrypted local refresh token; user-initiated limited inbox review and manual classification/import of candidate inbound replies. This is **not reliable thread-based synchronization**. A separate optional `gmail.send` consent upgrade enables explicitly approved initial inquiries; automatic sending remains off.
 - **Tests:** an offline .NET smoke-test executable checks discovery/triage, policy constraints, identity provisioning, data isolation, research decisions, simulated/manual message lifecycles, and token encryption. GitHub Actions restores, builds, runs tests and starts the protected localhost app.
 
 ## Current product boundary
 
 OutreachFlow is **research-first, not a bulk email or autonomous sales agent**. A search hit, public email address or unofficial link is never treated as a verified invitation to send. Current Gmail candidate matching uses a sender address and manually attested outbound history; it does not establish a Gmail thread, authenticated sender or contractual interest. Always review the message in Gmail and manually confirm relevance before importing it.
 
-**Not yet implemented:** live Gmail sending, provider-reconciled sent messages, provider thread IDs, durable job queue, unattended reply polling, bounce/complaint handling, multi-tenant quotas, buyer-first account discovery (see issue #10), production migrations and backups, account recovery, cloud hosting or billing.
+**Not yet implemented:** scheduled dispatch/retries, thread-backed inbound correlation, unattended reply polling, bounce/complaint handling, buyer-first account discovery (see issue #10), production operational recovery, account recovery, cloud hosting or billing. Local migration/recovery tools and provider identities are implemented; controlled live Gmail acceptance is pending.
 
 ## Source layout
 
@@ -26,7 +26,7 @@ OutreachFlow is **research-first, not a bulk email or autonomous sales agent**. 
 | `OutreachFlow/Program.cs` | Startup, DI, local-only protections, service registration |
 | `Models/`, `Data/` | Workspace, prospect and activity models; separate business and Identity EF contexts |
 | `Services/AccountEndpoints.cs`, `GoogleSignInEndpoints.cs`, `GoogleUserProvisioner.cs` | Local login, Google identity and workspace provisioning |
-| `Services/Mailbox/` | Google OAuth connection, local protected token store, read-only Gmail review |
+| `Services/Mailbox/` | Google OAuth connection, local protected token store, Gmail review, explicit send consent, approved inquiry dispatch and reconciliation |
 | `Services/Discovery/` | Tavily requests, search budget, query planning, triage, reviewed imports |
 | `Services/Research/` | Safe public-site HTML analysis, browser experiment, contacts and evidence |
 | `Services/OutreachService.cs` | Prospect state transitions, drafts, manual/simulated history, exports |

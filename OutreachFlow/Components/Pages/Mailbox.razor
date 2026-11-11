@@ -12,7 +12,7 @@
     <div>
         <div class="eyebrow">AUTHORIZED MAILBOX PILOT</div>
         <h1>Gmail reply review</h1>
-        <p>Read-only Gmail connection for this workspace. Review matching inbound messages and explicitly choose what to record. No emails are sent by OutreachFlow.</p>
+        <p>Review matching Gmail replies for this workspace. Sending an inquiry requires separate Gmail permission and explicit approval on the prospect page.</p>
     </div>
 </section>
 
@@ -33,6 +33,13 @@
     else
     {
         <p><strong>Connected:</strong> @connectedEmail</p>
+        <p><strong>Sending permission:</strong> @(sendApproved ? "Granted" : "Read only") · Local sending pilot @(Gmail.SendingAvailable ? "enabled" : "disabled")</p>
+        @if (Gmail.SendingAvailable && !sendApproved)
+        {
+            <p>Grant optional Gmail sending permission to send individual approved inquiries. No message is sent during connection.</p>
+            <a class="button" href="/mailbox/google/connect?send=1">Grant Gmail sending permission</a>
+        }
+        @if (!string.IsNullOrWhiteSpace(OAuthError)) { <p class="notice">Google connection was not completed. Check consent, mailbox identity and local OAuth settings, then reconnect. Existing authorization is retained.</p> }
         <p class="help">Only the latest 20 inbox messages from the last 30 days are examined. Candidate replies must match an existing prospect with a real, owner-recorded outgoing message. Other inbox messages are not displayed or imported.</p>
         <div class="actions">
             <button class="button primary" @onclick="Review" disabled="@busy">@(busy ? "Reviewing…" : "Review matching inbox replies")</button>
@@ -69,6 +76,8 @@
     </section>
 }
 @code {
+    [SupplyParameterFromQuery(Name = "error")] public string? OAuthError { get; set; }
+    private bool sendApproved;
     private bool authorized;
     private bool busy;
     private int workspaceId;
@@ -85,6 +94,7 @@
             workspaceId = await MailboxOwner.RequireAsync(state.User, Accounts);
             authorized = true;
             connectedEmail = await Gmail.ConnectedEmailAsync(workspaceId);
+            sendApproved = await Gmail.SendApprovedAsync(workspaceId);
         }
         catch (UnauthorizedAccessException) { authorized = false; }
         catch (Exception ex) { notice = "Mailbox status unavailable: " + ex.Message; }

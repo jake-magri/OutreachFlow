@@ -56,3 +56,7 @@ Automated coverage exercises legacy baseline adoption, direct upgrade from resto
 `baseline adopt <database-directory> <application-content-directory> <new-backup-directory>` remains available to record an initial baseline with a verified backup. Use `upgrade` to apply the provider identity migration as well.
 
 Design-time factories target in-memory databases for scaffolding. Use the recovery CLI to apply changes to the local installation. Future migrations should be generated with the pinned EF tool, reviewed for data preservation, and tested against both fresh and upgraded databases.
+
+## Approved Gmail dispatch upgrade
+
+The `ApprovedGmailDispatch` migration adds the durable initial-inquiry outbox. Use the same backup-first `upgrade` command with a new backup directory before starting this version against an existing installation. See [GMAIL-SENDING-PILOT.md](GMAIL-SENDING-PILOT.md). The upgrade itself does not enable sending or change Google grants.

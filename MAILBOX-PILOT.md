@@ -1,3 +1,5 @@
+> Optional sending is a separate, disabled-by-default pilot. See [GMAIL-SENDING-PILOT.md](GMAIL-SENDING-PILOT.md) for scope upgrade, outbox recovery and acceptance. This guide describes the read-only connection.
+
 # Historical PR #11 — Google sign-in and read-only Gmail pilot
 
 > **Historical implementation/acceptance notes.** PR #11 is merged. Google sign-in and Gmail connection were reported working in the November 11 local pilot; **end-to-end actual reply import has not yet been verified**. Current status and exit gates: [ROADMAP.md](ROADMAP.md) and [AUDIT-2026-11-11.md](AUDIT-2026-11-11.md).
@@ -49,9 +51,9 @@ The current inbound matching strategy compares the From address with a prospect'
 - Local file `mailbox-connections/workspace-<id>.protected` stores an ASP.NET DataProtection-protected refresh token. The `mailbox-keys/` key ring is protected with **current Windows user DPAPI**. Both folders are gitignored and must not be committed or shared.
 - Access tokens are short lived and held only during requests; this pilot does not persist them.
 - Only the workspace owner can access connection and inbox review operations. The authenticated session and active workspace are checked again on each action.
-- The Gmail permission is **`gmail.readonly`**, not `gmail.send` or `gmail.modify`. No additional provider call occurs until the owner explicitly clicks connect or review.
+- The initial Gmail permission is **`gmail.readonly`**. The optional sending pilot requires a separate explicit upgrade to add `gmail.send`; `gmail.modify` is never requested.
 - The preview is stored only in the current Blazor session. The complete inbox is not copied into SQLite; only owner-approved, matching inbound text is recorded.
-- A Gmail message ID is stored as an audit marker after import to avoid duplicate imports for the same prospect in this local prototype.
+- New imported Gmail message/thread identities are stored with workspace and mailbox ownership and unique constraints. Historical audit markers remain a conservative duplicate fallback.
 - The local prototype remains restricted to localhost and ASP.NET Core Development environment; Linux CI cannot enable live Gmail token storage because Windows DPAPI is required.
 - If the sender address in Settings differs from the connected Gmail identity, the app refuses to connect or read.
 

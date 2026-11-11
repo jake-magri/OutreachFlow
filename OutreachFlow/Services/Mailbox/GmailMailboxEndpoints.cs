@@ -15,7 +15,7 @@ public static class GmailMailboxEndpoints
 {
     private const string PendingCookie = "OutreachFlow.GmailOAuth.Pending";
     private sealed record PendingOAuth(string State, string Verifier, string UserId,
-        int WorkspaceId, DateTime ExpiresUtc);
+        int WorkspaceId, DateTime ExpiresUtc, bool RequestSend = false);
 
     public static IEndpointRouteBuilder MapGmailMailboxEndpoints(this IEndpointRouteBuilder app)
     {
@@ -33,10 +33,12 @@ public static class GmailMailboxEndpoints
                 .Select(w => w.SenderEmail).SingleAsync();
             if (string.IsNullOrWhiteSpace(senderEmail))
                 return Results.BadRequest("Set a sender email in workspace Settings before connecting Gmail.");
+            var requestSend = context.Request.Query["send"] == "1";
+            if (requestSend && !gmail.SendingAvailable) return Results.BadRequest("Enable the controlled sending pilot in local configuration first.");
             var state = GmailMailboxService.NewVerifier();
             var verifier = GmailMailboxService.NewVerifier();
             var pending = new PendingOAuth(state, verifier, userId, workspaceId,
-                DateTime.UtcNow.AddMinutes(10));
+                DateTime.UtcNow.AddMinutes(10), requestSend);
             var protector = protection.CreateProtector("OutreachFlow.GmailOAuth.Pending.v1");
             context.Response.Cookies.Append(PendingCookie,
                 protector.Protect(JsonSerializer.Serialize(pending)),
@@ -46,7 +48,7 @@ public static class GmailMailboxEndpoints
                     IsEssential = true, MaxAge = TimeSpan.FromMinutes(10),
                     Path = "/mailbox/google/callback"
                 });
-            return Results.Redirect(gmail.AuthorizationUrl(state, GmailMailboxService.Challenge(verifier)));
+            return Results.Redirect(gmail.AuthorizationUrl(state, GmailMailboxService.Challenge(verifier), requestSend));
         }).RequireAuthorization();
 
         app.MapGet("/mailbox/google/callback", async (HttpContext context,
@@ -91,7 +93,7 @@ public static class GmailMailboxEndpoints
                 .Select(w => w.SenderEmail).SingleAsync();
             try
             {
-                await gmail.ConnectAsync(activeWorkspace, code, pending.Verifier, expectedEmail);
+                await gmail.ConnectAsync(activeWorkspace, code, pending.Verifier, expectedEmail, requestSend: pending.RequestSend);
                 return Results.Redirect("/mailbox?connected=1");
             }
             catch (Exception ex) when (ex is InvalidOperationException or
