@@ -128,7 +128,11 @@ public static class AccountEndpoints
             {
                 BusinessName = name, SenderName = user.UserName ?? "",
                 SenderEmail = user.Email ?? "", SenderPhone = "", PostalAddress = "",
-                ServiceDescription = "", ServiceArea = "", TargetDescription = ""
+                ServiceDescription = "", ServiceArea = "", TargetDescription = "",
+                InitialSubjectTemplate = "Vendor registration inquiry",
+                InitialBodyTemplate = "Hi [team],\\n\\nI represent [business] and would like to learn how to apply or register as a provider for [company]. Is there an official process or person I should contact?\\n\\nThanks,\\n[sender]",
+                FollowupOneTemplate = "Hi, following up on the vendor registration process for [company]. Could you point me toward the correct contact or application?\\n\\nThanks,\\n[sender]",
+                FollowupTwoTemplate = "Hi, one final question about how [business] can be considered as a provider for [company]. I would appreciate any direction.\\n\\nThanks,\\n[sender]"
             };
             db.Workspaces.Add(workspace);
             await db.SaveChangesAsync();
