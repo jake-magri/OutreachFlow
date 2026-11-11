@@ -165,9 +165,9 @@ public static class OpportunityRanker
                 (buyer ? 20 : 0));
             if (seller && !buyer) score = Math.Min(score, 15);
             if (commentary) score = Math.Min(score, 40);
-            var reason = buyer ? "Contains buyer-side registration or procurement language. Link not verified." :
-                seller && !buyer ? "Signals a company selling supplies, not a buyer onboarding vendors." :
+            var reason = seller && !buyer ? "Signals a company selling supplies, not a buyer onboarding vendors." :
                 commentary ? "An informational guide may describe a process but is not itself an official form." :
+                buyer ? "Contains buyer-side registration or procurement language. Link not verified." :
                 job ? "May refer to hiring rather than a business contracting opportunity." :
                 "Relevant keywords found; process type and source still unclear.";
             var candidate = new OpportunityCandidate(title, normalized, uri.Host, query, score, summary)
