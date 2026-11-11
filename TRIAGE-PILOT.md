@@ -1,28 +1,40 @@
-# Milestone #9 — discovery-to-action triage pilot
+# Milestone #9 — deterministic discovery-to-action triage pilot
 
-## Scope
-An operator explicitly routes an indexed discovery suggestion into one of three review queues. This does **not** establish that the source is official, a registration is open, the buyer is eligible, a recipient is approved, or that any outreach is permitted.
+## Goal
+Turn an on-demand search batch into a grouped and explainable next-step review list without treating search snippets as verified procurement instructions or approving outreach. The system **suggests** where to investigate; only the workspace owner may commit a route to a prospect.
 
-- **Research further:** saves an unverified prospect with `ResearchNeeded` and a verification next action.
-- **Review application process:** saves an `ApplicationTask` queue item with `ResearchOutcome.NotReviewed`. The owner still must verify the actual official route and use the existing research form before considering manual submission.
-- **Review inquiry eligibility:** saves a `NeedsAction` queue item; the owner must verify process and recipient and explicitly record the appropriate research result before drafting.
-- All three routes persist the original indexed URL, an unverified search observation, and an audited owner triage activity.
-- Duplicate URL clicks within a workspace return the existing prospect without overwriting status, attempts, suppression, ownership, or notes.
+## How automatic suggestions work
+- **Review application process:** indexed evidence plausibly describes buyer-side registration, procurement, or, for an employment-oriented workspace, an application for work.
+- **Review inquiry eligibility:** indexed evidence points to a vendor/procurement inquiry contact but does not identify a clear application process.
+- **Research further:** evidence is too ambiguous, sparse, or mixed to recommend a specific action.
+- **Deprioritize / possible false match:** likely wholesaler selling goods, informational third-party guide, or job listing irrelevant to a business-services profile. Still visible and manually recoverable.
 
-## Acceptance walkthrough (no Tavily credits required if a search batch is already visible)
-1. Start local Development app and sign into the intended workspace; open **Discover**.
-2. Run an on-demand search or use a previous in-session result. Review the original source in the browser.
-3. Choose **Research further** for a result. Confirm the record appears in Prospects with a next action and unverified evidence.
-4. Repeat with distinct results for **Review application process** and **Review inquiry eligibility**.
-5. Inspect their detail views: application review is explicitly unverified; inquiry review cannot generate a draft without additional owner research and a valid approved contact.
-6. Repeat routing the same URL. Confirm that the original status and history are preserved rather than overwritten.
-7. Verify no external form was submitted and no email sent. Export CSV and check status and next action.
-8. Run `dotnet run --project OutreachFlow.SmokeTests` and `dotnet build OutreachFlow.slnx`; CI should run both too.
+Suggestions are computed deterministically from indexed title, snippet, URL path and workspace research profile. No LLM or extra search provider calls. Mixed signals resolve conservatively. The relevance score remains a keyword heuristic, not a verified confidence level. A suggested route is not a verified process, approved contact, invitation to bid, or evidence of legal permission to send email.
 
-## Deliberate limitations
-- Search-index evidence is never auto-upgraded to `IsOfficial=true`.
-- This milestone does not verify whether the result's host owns a business or whether an external form belongs to it.
-- No live sending, mailbox connection, job scheduler, autonomous form filling, or new database schema.
-- Existing direct imports and manual research flows remain intact.
-- Duplicate handling is designed for the localhost single-process pilot, not multiple concurrent hosted writers. Production needs database-level canonical identity, an enforced unique key, and migration/locking work.
-- This is a local-only prototype, not a public multi-tenant SaaS release.
+## Owner review and persistence
+- **Discover** groups indexed candidates by suggested next step and presents the reason for each suggestion.
+- The owner inspects the original source and explicitly chooses **Approve suggested route** or **Choose a different route**.
+- Deprioritized candidates remain visible with an **Override and review this result** option.
+- A selected route saves a prospect, source evidence marked `IsOfficial=false`, next action and audited triage activity.
+- **Research further:** `ResearchNeeded` queue.
+- **Review application process:** `ApplicationTask` queue, `ResearchOutcome.NotReviewed`; actual application still requires manual verification and submission.
+- **Review inquiry eligibility:** `NeedsAction` queue, `ResearchOutcome.NotReviewed`; process and recipient must be verified before drafting.
+- Existing prospect URLs retain their previous state; repeated discovery choices do not overwrite ownership, suppression, messages or notes.
+
+## Acceptance walkthrough
+1. Start the local Development app and sign into the intended workspace; open **Discover**.
+2. Execute one on-demand search (two queries maximum, up to five results per query).
+3. Confirm results are grouped under suggested routes with specific explanations, and that wholesaler or guide false matches are lower priority but visible.
+4. Inspect a plausible official source and approve its suggested route. Check the resulting Prospects entry, NextAction, unverified source evidence, and activity history.
+5. On a different result, choose an alternative route. Confirm the override is explicitly initiated by the owner.
+6. Test a low-priority result's **Override and review this result** control; it must not silently import.
+7. Try routing an already imported URL. Confirm its original status is preserved.
+8. Confirm no automatic email, portal submission, account signup, or verified `ProcessUrl` was created.
+9. Run `dotnet build OutreachFlow.slnx` and `dotnet run --project OutreachFlow.SmokeTests` locally (CI runs these as well).
+
+## Limits and follow-up work
+- Indexed results cannot establish organizational identity, freshness, eligibility, or the authenticity of cross-domain forms. Verified process classification requires separate source inspection.
+- Search result suggestions are session-only until expressly routed; no unattended prospect creation.
+- No live mailbox integration, scheduler, auto-send, LLM, schema migration or production deployment.
+- Single-process local prototype: database-enforced URL canonicalization/uniqueness and concurrent-writer protection are production follow-ups.
+- Additional richer research-driven verification and policy tuning should be evaluated with real pilot observations before approving automatic actions.
