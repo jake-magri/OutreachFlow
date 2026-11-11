@@ -6,6 +6,7 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
+using OutreachFlow.Models;
 using OutreachFlow.Data;
 
 namespace OutreachFlow.Services.Mailbox;
@@ -101,8 +102,7 @@ public static class MailboxOwner
 }
 
 public sealed class GmailMailboxService(IConfiguration config, IHttpClientFactory clients,
-    GmailConnectionStore store, AccountDbContext accounts,
-    Microsoft.AspNetCore.Components.Authorization.AuthenticationStateProvider authentication)
+    GmailConnectionStore store)
 {
     public const string ReadScope = "https://www.googleapis.com/auth/gmail.readonly";
     private const string AuthEndpoint = "https://accounts.google.com/o/oauth2/v2/auth";
@@ -229,10 +229,15 @@ public sealed class GmailMailboxService(IConfiguration config, IHttpClientFactor
         if (!message.TryGetProperty("payload", out var payload) ||
             !payload.TryGetProperty("headers", out var headers) ||
             headers.ValueKind != JsonValueKind.Array) return null;
-        string Header(string name) => headers.EnumerateArray()
-            .FirstOrDefault(h => h.TryGetProperty("name", out var n) &&
-                n.GetString()?.Equals(name, StringComparison.OrdinalIgnoreCase) == true)
-            .TryGetProperty("value", out var value) ? value.GetString() ?? "" : "";
+        string Header(string name)
+        {
+            foreach (var header in headers.EnumerateArray())
+                if (header.TryGetProperty("name", out var n) &&
+                    n.GetString()?.Equals(name, StringComparison.OrdinalIgnoreCase) == true &&
+                    header.TryGetProperty("value", out var value))
+                    return value.GetString() ?? "";
+            return "";
+        }
         var from = Header("From");
         if (!MailAddress.TryCreate(from, out var sender) ||
             !sender.Address.Equals(expectedFrom, StringComparison.OrdinalIgnoreCase))
@@ -245,7 +250,7 @@ public sealed class GmailMailboxService(IConfiguration config, IHttpClientFactor
         if (body.Length > 4000) body = body[..4000];
         var received = DateTime.UtcNow;
         if (message.TryGetProperty("internalDate", out var stamp) &&
-            long.TryParse(stamp.GetString(), out var millis))
+            long.TryParse(stamp.ValueKind == JsonValueKind.String ? stamp.GetString() : stamp.GetRawText(), out var millis))
         {
             try { received = DateTimeOffset.FromUnixTimeMilliseconds(millis).UtcDateTime; }
             catch (ArgumentOutOfRangeException) { return null; }
@@ -302,12 +307,13 @@ public sealed class GmailMailboxService(IConfiguration config, IHttpClientFactor
             throw new InvalidOperationException("The connected mailbox no longer matches the workspace sender.");
         var all = await db.Prospects.AsNoTracking().Where(p =>
             p.WorkspaceId == workspaceId && p.Attempts > 0 &&
-            p.Status != Models.ProspectStatus.Closed &&
-            p.Status != Models.ProspectStatus.Suppressed &&
+            p.Status != ProspectStatus.Closed &&
+            p.Status != ProspectStatus.Suppressed &&
             p.ContactEmail != "").ToListAsync(ct);
+        var eligibleIds = all.Select(p => p.Id).ToArray();
         var sent = await db.Messages.AsNoTracking().Where(m =>
             !m.IsSimulation && m.Direction == "Outbound" &&
-            all.Select(p => p.Id).Contains(m.ProspectId))
+            eligibleIds.Contains(m.ProspectId))
             .Select(m => m.ProspectId).Distinct().ToListAsync(ct);
         var people = all.Where(p => sent.Contains(p.Id))
             .GroupBy(p => p.ContactEmail, StringComparer.OrdinalIgnoreCase)
@@ -317,7 +323,8 @@ public sealed class GmailMailboxService(IConfiguration config, IHttpClientFactor
         var token = await TokenAsync(connection, ct);
         using var list = await GetAsync("messages?labelIds=INBOX&maxResults=20&q=" +
             Uri.EscapeDataString("newer_than:30d"), token, ct);
-        if (!list.RootElement.TryGetProperty("messages", out var messages)) return [];
+        if (!list.RootElement.TryGetProperty("messages", out var messages) ||
+            messages.ValueKind != JsonValueKind.Array) return [];
         var seen = await db.Activities.AsNoTracking()
             .Where(a => a.Kind == "Gmail inbound imported")
             .Select(a => a.Detail).ToListAsync(ct);
