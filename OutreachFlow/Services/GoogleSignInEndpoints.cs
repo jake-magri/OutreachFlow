@@ -17,10 +17,13 @@ public static class GoogleSignInEndpoints
 
     // A single Google Cloud web OAuth client can support both the basic sign-in
     // callback and the separate optional Gmail consent callback.
+    private static bool HasSeparateIdentityClient(IConfiguration config) =>
+        config["GoogleAuth:ClientId"] is not null ||
+        config["GoogleAuth:ClientSecret"] is not null;
     public static string? ClientId(IConfiguration config) =>
-        config["GoogleAuth:ClientId"] ?? config["Gmail:ClientId"];
+        HasSeparateIdentityClient(config) ? config["GoogleAuth:ClientId"] : config["Gmail:ClientId"];
     public static string? ClientSecret(IConfiguration config) =>
-        config["GoogleAuth:ClientSecret"] ?? config["Gmail:ClientSecret"];
+        HasSeparateIdentityClient(config) ? config["GoogleAuth:ClientSecret"] : config["Gmail:ClientSecret"];
     public static bool Configured(IConfiguration config) =>
         !string.IsNullOrWhiteSpace(ClientId(config)) &&
         !string.IsNullOrWhiteSpace(ClientSecret(config));
