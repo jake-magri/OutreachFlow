@@ -53,3 +53,35 @@ jobs:
             cat /tmp/outreachflow-startup.log
             exit 1
           fi
+
+          # Full first-owner POST path, not merely the anonymous form, with
+          # the real antiforgery cookie and a disposable CI-only password.
+          curl --insecure --silent --cookie-jar /tmp/of-cookies             --cookie /tmp/of-cookies             https://localhost:7117/account/setup -o /tmp/owner-setup.html
+          token=$(sed -n "s/.*name='__RequestVerificationToken' value='\([^']*\)'.*/\1/p" /tmp/owner-setup.html)
+          if [ -z "$token" ]; then
+            echo "Missing setup antiforgery token"
+            exit 1
+          fi
+          setup_code=$(curl --insecure --silent --cookie /tmp/of-cookies             --cookie-jar /tmp/of-cookies --output /dev/null --write-out '%{http_code}'             --data-urlencode "__RequestVerificationToken=$token"             --data-urlencode "email=ci-owner@example.org"             --data-urlencode "password=CiOnlyPassword1234!"             https://localhost:7117/account/setup)
+          if [ "$setup_code" != "302" ]; then
+            echo "Expected first owner setup POST to redirect, got: $setup_code"
+            cat /tmp/outreachflow-startup.log
+            exit 1
+          fi
+          python3 - <<'PY'
+          import sqlite3
+          from pathlib import Path
+          roots = [Path("."), Path("OutreachFlow")]
+          business = next((r / "outreachflow.db" for r in roots
+                           if (r / "outreachflow.db").exists()), None)
+          auth = next((r / "outreachflow.auth.db" for r in roots
+                       if (r / "outreachflow.auth.db").exists()), None)
+          assert business and auth, "Expected both local SQLite files"
+          with sqlite3.connect(business) as db:
+              assert db.execute("select count(*) from Workspaces").fetchone()[0] == 1
+              assert db.execute("select count(*) from Prospects").fetchone()[0] == 0
+          with sqlite3.connect(auth) as db:
+              assert db.execute("select count(*) from AspNetUsers").fetchone()[0] == 1
+              assert db.execute("select count(*) from Memberships").fetchone()[0] == 1
+          print("PASS: fresh first-owner setup creates one private workspace, no demo prospects")
+          PY
