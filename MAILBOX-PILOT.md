@@ -13,7 +13,10 @@ The current inbound matching strategy compares the From address with a prospect'
 1. Back up your existing local OutreachFlow SQLite databases. Verify the application works before adding mailbox settings.
 2. In **Google Cloud Console**, create/select a project, enable **Gmail API**, configure an OAuth consent screen, and create an **OAuth 2.0 Web application client**.
 3. For your private pilot, set the app to **Testing** and add your authorized Google account to the test-user list as applicable. Workspace organization administrators may need to approve the OAuth app.
-4. Add the exact authorized redirect URI `https://localhost:7117/mailbox/google/callback` to the Google OAuth client. It must exactly match your locally running app URL and the secret value below.
+4. Add BOTH exact authorized redirect URIs to the same Google OAuth web client:
+   - `https://localhost:7117/signin-google` — ASP.NET Google sign-in middleware (basic identity only).
+   - `https://localhost:7117/mailbox/google/callback` — separately consented Gmail read-only connection.
+   Both must match the running app's HTTPS localhost URL. No Gmail permission is requested at sign-in.
 5. In PowerShell, from the repository root, run:
    ```powershell
    dotnet user-secrets set "Gmail:ClientId" "YOUR_GOOGLE_OAUTH_CLIENT_ID" --project OutreachFlow
@@ -21,11 +24,23 @@ The current inbound matching strategy compares the From address with a prospect'
    dotnet user-secrets set "Gmail:RedirectUri" "https://localhost:7117/mailbox/google/callback" --project OutreachFlow
    dotnet run --project OutreachFlow
    ```
-6. Sign in as the owner, open **Settings**, and make the workspace **Sender email** exactly match the Google account you intend to authorize. Save.
-7. Open **Mailbox** in the sidebar, click **Connect Gmail (read only)**, choose the correct account, and explicitly approve the OAuth request. OAuth uses a short-lived signed state cookie, PKCE S256 and a server-side client secret; authorization tokens are never printed to the UI.
-8. Return to Mailbox. Connection is active only for the currently selected workspace. Click **Review matching inbox replies**; the app searches no more than 20 inbox messages from the previous 30 days and only shows replies matching a prospect with owner-recorded real outbound history.
-9. Review a matching message, choose its classification and click **Record reviewed reply**. It is imported as a real inbound message with source provider ID/audit marker; `Interested` creates a warm lead, `ApplicationInstructions` creates an application task, `Declined` suppresses further contact, and uncertain categories go to manual action. Simulated follow-ups are paused.
-10. Click **Disconnect local authorization** to remove the locally stored refresh token. To revoke Google's grant, additionally remove OutreachFlow's authorization from your Google Account; this button alone does not call Google's revocation endpoint.
+6. **One-time existing-account link:** sign in with the ORIGINAL local password, visit **Switch business / Workspaces**, then select **Link Google sign-in** and choose your authorized Google account. This explicitly links the stable Google account ID to your pre-existing local user/workspaces. It does not merge accounts by email.
+7. Sign out, then on the local login page select **Continue with Google**. A Google identity that has NOT been explicitly linked is rejected; public Google-based registration is not included in this localhost-only prototype.
+8. Open **Settings**, set the workspace **Sender email** to the Gmail/Workspace address you intend to authorize, and save. Google sign-in itself does NOT grant Gmail access.
+9. Open **Mailbox** in the sidebar, click **Connect Gmail (read only)**, choose the corresponding Google account, and explicitly approve the additional Gmail permission. OAuth uses a short-lived signed state cookie, PKCE S256 and a server-side client secret; authorization tokens are never printed to the UI.
+10. Return to Mailbox. Connection is active only for the currently selected workspace. Click **Review matching inbox replies**; the app searches no more than 20 inbox messages from the previous 30 days and only shows replies matching a prospect with owner-recorded real outbound history.
+11. Review a matching message, choose its classification and click **Record reviewed reply**. It is imported as a real inbound message with source provider ID/audit marker; `Interested` creates a warm lead, `ApplicationInstructions` creates an application task, `Declined` suppresses further contact, and uncertain categories go to manual action. Simulated follow-ups are paused.
+12. Click **Disconnect local authorization** to remove the locally stored refresh token. To revoke Google's grant, additionally remove OutreachFlow's authorization from your Google Account; this button alone does not call Google's revocation endpoint.
+
+
+## Google sign-in vs Gmail authorization
+
+- **Continue with Google** requests only basic account identity scopes (`openid`, `email`, `profile`). It logs an existing linked OutreachFlow user in, preserving local workspace memberships and permissions.
+- **Connect Gmail (read only)** is a different, optional OAuth request. Google consent is required separately because Gmail access is substantially more sensitive than basic authentication. Merely signing into OutreachFlow never grants inbox access.
+- The SAME Google Cloud OAuth 2.0 Web client ID/secret may be used for both flows; the two distinct HTTPS callbacks must both be registered in Google Cloud Console. The existing `Gmail:ClientId` and `Gmail:ClientSecret` settings are reused for sign-in unless `GoogleAuth:ClientId` and `GoogleAuth:ClientSecret` are explicitly configured separately.
+- This PR does not auto-create accounts on first Google login or match a Google identity to a local user merely because the email strings match. First establish a local account, link the stable Google subject while authenticated, then use Google sign-in thereafter. Unlinked accounts are refused rather than inadvertently gaining access to business data.
+- Local password sign-in remains enabled as a fallback throughout the pilot. Google sign-in does not change the identity/workspace database schema or migrate existing users.
+- Production onboarding, Google-only registration, separate support for organizations using Microsoft 365, and account-recovery policies require an explicit later design/review.
 
 ## Data handling
 
