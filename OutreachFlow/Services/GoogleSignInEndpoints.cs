@@ -15,9 +15,15 @@ public static class GoogleSignInEndpoints
 {
     public const string Provider = "Google";
 
+    // A single Google Cloud web OAuth client can support both the basic sign-in
+    // callback and the separate optional Gmail consent callback.
+    public static string? ClientId(IConfiguration config) =>
+        config["GoogleAuth:ClientId"] ?? config["Gmail:ClientId"];
+    public static string? ClientSecret(IConfiguration config) =>
+        config["GoogleAuth:ClientSecret"] ?? config["Gmail:ClientSecret"];
     public static bool Configured(IConfiguration config) =>
-        !string.IsNullOrWhiteSpace(config["GoogleAuth:ClientId"]) &&
-        !string.IsNullOrWhiteSpace(config["GoogleAuth:ClientSecret"]);
+        !string.IsNullOrWhiteSpace(ClientId(config)) &&
+        !string.IsNullOrWhiteSpace(ClientSecret(config));
 
     public static IEndpointRouteBuilder MapGoogleSignIn(this IEndpointRouteBuilder app)
     {
@@ -46,7 +52,7 @@ public static class GoogleSignInEndpoints
             }
             if (await users.IsLockedOutAsync(user))
                 return Results.Redirect("/account/login?google=locked");
-            await signIn.SignInAsync(user, isPersistent: false, info.LoginProvider);
+            await signIn.SignInAsync(user, isPersistent: false, authenticationMethod: info.LoginProvider);
             return Results.Redirect("/");
         }).AllowAnonymous();
 
