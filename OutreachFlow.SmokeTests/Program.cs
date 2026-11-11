@@ -64,20 +64,21 @@ finally { try { Directory.Delete(mailboxFixture, recursive: true); } catch { } }
 var encodedBody = GmailMailboxService.Base64Url(Encoding.UTF8.GetBytes(
     "Thanks, we are interested in a vendor call."));
 var receivedMillis = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-using var gmailMessage = JsonDocument.Parse($"""
+using var gmailMessage = JsonDocument.Parse(JsonSerializer.Serialize(new
 {
-  "internalDate": "{{receivedMillis}}",
-  "labelIds": ["INBOX"],
-  "payload": {
-    "mimeType": "text/plain",
-    "headers": [
-      {"name": "From", "value": "Vendor Team <procurement@example.org>"},
-      {"name": "Subject", "value": "Re: Fleet washing"}
-    ],
-    "body": {"data": "{{encodedBody}}"}
-  }
-}
-""");
+    internalDate = receivedMillis.ToString(),
+    labelIds = new[] { "INBOX" },
+    payload = new
+    {
+        mimeType = "text/plain",
+        headers = new[]
+        {
+            new { name = "From", value = "Vendor Team <procurement@example.org>" },
+            new { name = "Subject", value = "Re: Fleet washing" }
+        },
+        body = new { data = encodedBody }
+    }
+}));
 var parsedReply = GmailMailboxService.ParseInbound("provider-id-1", gmailMessage.RootElement,
     10, "Buyer Co", "procurement@example.org");
 Check(parsedReply?.ProspectId == 10 &&
