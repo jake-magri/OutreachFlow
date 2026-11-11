@@ -56,8 +56,12 @@ public sealed class OfficialSiteResearcher : ICompanyResearcher, IDisposable
         client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("text/plain"));
     }
 
-    public async Task<ResearchScan> SearchAsync(string website, CancellationToken cancellationToken = default)
+    public Task<ResearchScan> SearchAsync(string website, CancellationToken cancellationToken = default)
+        => SearchAsync(website, ResearchProfileCatalog.Default(), cancellationToken);
+
+    public async Task<ResearchScan> SearchAsync(string website, ResearchProfile profile, CancellationToken cancellationToken = default)
     {
+        profile = ResearchProfile.Validate(profile);
         var root = ResearchUrlPolicy.ParseWebsite(website);
         var robotsUrl = new Uri(root.GetLeftPart(UriPartial.Authority) + "/robots.txt");
         string robots;
@@ -111,12 +115,12 @@ public sealed class OfficialSiteResearcher : ICompanyResearcher, IDisposable
                 contacts.TryAdd(contact.Address, contact);
             }
             var title = ExtractTitle(page.Content);
-            var observation = ExtractSnippet(page.Content);
+            var observation = ExtractSnippet(page.Content, profile);
             if (!string.IsNullOrWhiteSpace(observation))
                 candidates[page.Url.AbsoluteUri] = new ResearchCandidate($"Page text: {title}", page.Url.AbsoluteUri, observation);
             foreach (var (url, anchor) in ExtractLinks(page.Url, page.Content))
             {
-                var score = Score(anchor + " " + url.AbsolutePath);
+                var score = ResearchProfileRules.ScoreLink(anchor + " " + url.AbsolutePath, profile);
                 if (score < 1) continue;
                 var same = ResearchUrlPolicy.IsSameSite(root, url);
                 if (same)
@@ -139,16 +143,12 @@ public sealed class OfficialSiteResearcher : ICompanyResearcher, IDisposable
                    "PDFs, third-party portals, dynamic pages and search-engine results were not inspected. " +
                    "Do not mark 'No process found' without additional manual checking.";
         var possibleProcess = candidates.Values.Any(x =>
-            x.Title.Contains("supplier", StringComparison.OrdinalIgnoreCase) ||
-            x.Title.Contains("vendor", StringComparison.OrdinalIgnoreCase) ||
-            x.Title.Contains("procurement", StringComparison.OrdinalIgnoreCase) ||
-            x.Title.Contains("register", StringComparison.OrdinalIgnoreCase) ||
-            x.Title.Contains("subcontract", StringComparison.OrdinalIgnoreCase));
+            ResearchProfileRules.ContainsProcessSignal(x.Title + " " + x.Observation, profile));
         var triage = possibleProcess
-            ? "Potential supplier/application reference found: verify the process and whether your service qualifies before assigning a route."
+            ? "Potential process/application reference found: verify its relevance and whether this opportunity qualifies before assigning a route."
             : contacts.Count > 0
                 ? "Published contact candidates found, but no verified application process. Continue manual source review before inquiry eligibility."
-                : "No clear vendor process or contact discovered in checked HTML. Review additional sources; absence is not proof.";
+                : "No matching process or contact discovered in checked HTML. Review additional sources; absence is not proof.";
         return new ResearchScan(candidates.Values.Take(16).ToArray(), pages, note)
         {
             Contacts = contacts.Values.ToArray(),
@@ -236,7 +236,6 @@ public sealed class OfficialSiteResearcher : ICompanyResearcher, IDisposable
     private static readonly Regex TagRegex = new("<[^>]+>", RegexOptions.Singleline | RegexOptions.Compiled, TimeSpan.FromMilliseconds(300));
     private static readonly Regex ScriptRegex = new("<(script|style|noscript)\\b[^>]*>[\\s\\S]*?</\\1>", RegexOptions.IgnoreCase | RegexOptions.Compiled, TimeSpan.FromMilliseconds(300));
     private static readonly Regex SpaceRegex = new("\\s+", RegexOptions.Compiled, TimeSpan.FromMilliseconds(300));
-    private static readonly Regex KeywordRegex = new("supplier|vendor|procurement|contractor|purchasing|registration|onboard|subcontract|bid opportunit|doing business with", RegexOptions.IgnoreCase | RegexOptions.Compiled, TimeSpan.FromMilliseconds(300));
 
     private static IEnumerable<(Uri Url, string Label)> ExtractLinks(Uri page, string html)
     {
@@ -255,31 +254,18 @@ public sealed class OfficialSiteResearcher : ICompanyResearcher, IDisposable
         }
     }
 
-    private static int Score(string text)
-    {
-        var s = text.ToLowerInvariant();
-        int score = 0;
-        if (s.Contains("supplier") || s.Contains("vendor")) score += 5;
-        if (s.Contains("procurement") || s.Contains("purchasing") || s.Contains("subcontract")) score += 4;
-        if (s.Contains("register") || s.Contains("onboard") || s.Contains("apply") || s.Contains("contractor")) score += 3;
-        if (s.Contains("bid") || s.Contains("doing-business") || s.Contains("doing business")) score += 3;
-        if (s.Contains("contact")) score += 1;
-        if (s.Contains("career") || s.Contains("jobs") || s.Contains("privacy") || s.Contains("investor")) score -= 5;
-        return score;
-    }
-
     private static string ExtractTitle(string html)
     {
         var match = Regex.Match(html, "<title[^>]*>(?<title>[\\s\\S]*?)</title>", RegexOptions.IgnoreCase, TimeSpan.FromMilliseconds(300));
         return Shorten(match.Success ? PlainText(match.Groups["title"].Value) : "Untitled company page", 120);
     }
 
-    private static string ExtractSnippet(string html)
+    private static string ExtractSnippet(string html, ResearchProfile profile)
     {
         var visible = PlainText(ScriptRegex.Replace(html, " "));
-        var match = KeywordRegex.Match(visible);
-        if (!match.Success) return "";
-        var start = Math.Max(0, match.Index - 100);
+        var index = ResearchProfileRules.FirstMatchIndex(visible, profile);
+        if (index < 0) return "";
+        var start = Math.Max(0, index - 100);
         return "Unverified page excerpt: …" + Shorten(visible[start..], 440);
     }
 
