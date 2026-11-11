@@ -1,4 +1,6 @@
-# Milestone #9 — deterministic discovery-to-action triage pilot
+# Historical milestone #9 — deterministic discovery-to-action triage pilot
+
+> **Historical accepted search-result fixtures.** PR #9 is merged; latest architectural status and remaining work are recorded in [AUDIT-2026-11-11.md](AUDIT-2026-11-11.md).
 
 ## Goal
 Turn an on-demand search batch into a grouped and explainable next-step review list without treating search snippets as verified procurement instructions or approving outreach. The system **suggests** where to investigate; only the workspace owner may commit a route to a prospect.
