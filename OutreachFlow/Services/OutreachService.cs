@@ -369,6 +369,13 @@ public sealed class OutreachService(IDbContextFactory<OutreachDbContext> factory
         await transaction.CommitAsync();
     }
 
+    private static async Task CancelPendingGmailFollowupsAsync(OutreachDbContext db, int prospectId, string reason)
+    {
+        var jobs = await db.FollowupJobs.Where(j => j.ProspectId == prospectId &&
+            (j.State == "Queued" || j.State == "Held")).ToListAsync();
+        foreach (var j in jobs) { j.State = "Cancelled"; j.Result = reason; }
+    }
+
     // An actual reply pasted by the owner; never claims automatic mailbox synchronization.
     public async Task RecordExternalReplyAsync(int id, string body, ReplyCategory category)
     {
@@ -406,6 +413,7 @@ public sealed class OutreachService(IDbContextFactory<OutreachDbContext> factory
         p.UpdatedUtc = DateTime.UtcNow;
         AddActivity(db, id, "MANUAL REPLY RECORDED",
             $"Owner entered actual response and classified it as {category}. Review before further action.");
+        await CancelPendingGmailFollowupsAsync(db, id, "Owner recorded an actual reply");
         await db.SaveChangesAsync();
     }
 
@@ -518,6 +526,7 @@ public sealed class OutreachService(IDbContextFactory<OutreachDbContext> factory
         p.NextActionDate = nextDate;
         p.UpdatedUtc = DateTime.UtcNow;
         AddActivity(db, id, $"Manual: {activityType}", note.Trim());
+        await CancelPendingGmailFollowupsAsync(db, id, "Owner took over the prospect manually");
         await db.SaveChangesAsync();
     }
 
@@ -535,6 +544,7 @@ public sealed class OutreachService(IDbContextFactory<OutreachDbContext> factory
         p.NextActionDate = null;
         p.UpdatedUtc = DateTime.UtcNow;
         AddActivity(db, id, "Closed", "Manually closed. Automatic outreach remains disabled.");
+        await CancelPendingGmailFollowupsAsync(db, id, "Prospect manually closed");
         await db.SaveChangesAsync();
     }
 
