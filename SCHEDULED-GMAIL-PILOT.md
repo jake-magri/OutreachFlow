@@ -27,7 +27,7 @@ Gmail must separately be connected, authorized for `gmail.readonly` and `gmail.s
 
 - A missing/revoked OAuth permission, inbox failure, ambiguous message, possible bounce/complaint, incomplete Gmail results, changed recipient/sender, or invalid status **holds or cancels** the schedule rather than allowing an unverified send.
 - The automatic inbox scan is bounded to recent INBOX items; if the inbox exceeds its coverage limit, sending stops for owner review. **This is not a production-grade Gmail history sync or a guarantee of bounce detection.**
-- A job is persisted as `Sending` **before** external submission. If a crash or timeout leaves acceptance uncertain, the next worker cycle marks it `Uncertain` and prohibits any automatic retry.
+- A job is persisted as `Sending` **before** external submission. If a crash or timeout leaves acceptance uncertain, the next worker cycle marks it `Uncertain` and prohibits any automatic retry. A prospect-page **Check Gmail Sent** action reconciles an exact Message-ID/sender/recipient/body match without sending again. After recovery, later steps remain held until the owner explicitly resumes them.
 - No email is sent for an already closed, suppressed, manually taken-over or replied-to prospect. Human review takes precedence. No claimed delivery guarantee; Gmail accepted is different from inbox delivery.
 - If the application was offline long enough that a job is over 24 hours overdue, the job is held for rescheduling rather than blasting overdue mail.
 - Reply classification remains a manual decision; detecting a reply only moves the prospect to `NeedsAction`.
@@ -36,6 +36,7 @@ Gmail must separately be connected, authorized for `gmail.readonly` and `gmail.s
 
 - `OutreachFlow.SmokeTests/FollowupAutomationTests.cs`: fake clock + fake Gmail sender/inbox, expected cadence, immutable approval, duplicate approval prevention, pause/resume, restart persistence, stop on reply, inbox outage, uncertain delivery, and manual handoff.
 - `OutreachFlow.BrowserTests`: confirms the schedule UI exists and does not offer a live schedule after a simulated send.
+- `GmailPayloadTests`: fake Gmail API proves an active-sequence inbox scan finds a confirmed reply but fails closed on ambiguous thread content.
 - Windows/Linux smoke and EF model-drift checks plus Playwright must pass before PR merge.
 - CI never enables real Gmail credentials and does not transmit email.
 - On an existing installation use the documented **backup-first RecoveryCli upgrade** before opening the updated app. Do not delete existing databases.
