@@ -91,7 +91,8 @@ public sealed partial class GmailMailboxService : IGmailSender
             throw new InvalidOperationException("Invalid immutable Gmail follow-up headers.");
         var d = new OutboundDispatch {
             From = job.From, To = job.To, Subject = job.Subject,
-            Body = job.Body, RfcMessageId = job.RfcMessageId, ApprovedUtc = job.ApprovedUtc
+            Body = job.Body, RfcMessageId = job.RfcMessageId,
+            ApprovedUtc = job.AttemptedUtc ?? job.ApprovedUtc
         };
         return Mime(d).Replace("MIME-Version: 1.0\r\n",
             $"In-Reply-To: {job.ReplyToMessageId}\r\nReferences: {job.ReplyToMessageId}\r\nMIME-Version: 1.0\r\n");
