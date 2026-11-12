@@ -172,6 +172,23 @@ internal static class FollowupAutomationTests
             await service.TickAsync();
             Check((await service.ListAsync(owner, blockedProspect))[0].State == "Cancelled" &&
                 gmail.Sends == before, "suppressed prospect cannot dispatch a queued follow-up");
+
+            var revoked = await NewProspect("Sequence E");
+            await service.ApproveAsync(owner, revoked,
+                (await service.PreviewAsync(owner, revoked)).Hash);
+            var revokedDue = (await service.ListAsync(owner, revoked))[0].DueUtc;
+            await using (var authDb = auth.CreateDbContext())
+            {
+                var membership = await authDb.Memberships.SingleAsync();
+                authDb.Memberships.Remove(membership);
+                await authDb.SaveChangesAsync();
+            }
+            clock.UtcNow = new DateTimeOffset(revokedDue.AddMinutes(1), TimeSpan.Zero);
+            await service.TickAsync();
+            await using (var db = business.CreateDbContext())
+                Check((await db.FollowupJobs.SingleAsync(j => j.ProspectId == revoked &&
+                    j.Step == 1)).State == "Held" && gmail.Sends == before,
+                    "revoked approving owner permission blocks scheduled Gmail sends");
         }
         finally { await TestDataCleanup.DirectoryAsync(root); }
     }
