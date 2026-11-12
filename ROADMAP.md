@@ -1,5 +1,11 @@
 # OutreachFlow roadmap — assessed November 11, 2026
 
+## Next bounded engineering plan (documentation-first, November 11)
+
+[Commercial-contract pilot specification](docs/commercial-contract-pilot/README.md) is the canonical future-session implementation contract. [Epic #34](https://github.com/jake-magri/OutreachFlow/issues/34) decomposes into: M1 [#35 UI truth](https://github.com/jake-magri/OutreachFlow/issues/35), M2 [#36 commercial-email gate](https://github.com/jake-magri/OutreachFlow/issues/36), M3 [#37 buyer-first discovery](https://github.com/jake-magri/OutreachFlow/issues/37), M4 [#38 account evidence and conservative identity](https://github.com/jake-magri/OutreachFlow/issues/38), and M5 [#39 operator demo workflows](https://github.com/jake-magri/OutreachFlow/issues/39). All are **open implementation requirements**, not delivered by the documentation PR.
+
+**Owner decision:** Do not start customer outreach, assert product-market fit, or expand the scope into public SaaS hosting without a later explicit decision. Definition of Done and tests live in `04-ACCEPTANCE.md`; AI stop rules in `05-AI-HANDOFF.md`.
+
 ## North star
 
 Build a **configurable B2B opportunity-to-conversation pipeline**: find likely buyers or relevant official processes, record source-backed evidence, verify the correct approach, obtain sender/recipient approval, send a small number of legitimate inquiries, detect replies, stop inappropriate follow-ups and hand off meaningful decisions. Fleet washing is the first proof of value, not a hard-coded product restriction.
