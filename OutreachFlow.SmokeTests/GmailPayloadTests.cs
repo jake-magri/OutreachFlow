@@ -41,6 +41,14 @@ internal static class GmailPayloadTests
                 db.ProviderMessages.Add(new ProviderMessage { ProspectId = prospectId, WorkspaceId = workspaceId,
                     Message = message, MailboxEmail = "owner@example.org",
                     MessageId = "sent-fixture", ThreadId = "thread-fixture" });
+                db.FollowupJobs.Add(new FollowupJob {
+                    WorkspaceId = workspaceId, ProspectId = prospectId, Step = 1, Kind = "Email",
+                    State = "Queued", DueUtc = DateTime.UtcNow.AddDays(1),
+                    From = "owner@example.org", To = "contact@example.org",
+                    Subject = "Fixture", Body = "Fixture", ThreadId = "thread-fixture",
+                    ReplyToMessageId = "<fixture-outbound@example.org>",
+                    RfcMessageId = "<fixture-followup@example.org>"
+                });
                 await db.SaveChangesAsync();
             }
             var store = new GmailConnectionStore(Path.Combine(temp, "connections"),
@@ -51,6 +59,8 @@ internal static class GmailPayloadTests
 
             Check((await gmail.ReviewInboxAsync(workspaceId, factory)).Single().Body == "Genuine fixture text",
                 "bounded read path includes valid provider-confirmed replies");
+            Check((await gmail.ScanAutomationAsync(workspaceId, factory)).Single().ProspectId == prospectId,
+                "automatic scan detects a genuine reply only for an active scheduled sequence");
 
             transport.Mode = ResponseMode.InvalidHeader;
             Check((await gmail.ReviewInboxAsync(workspaceId, factory)).Count == 0,
@@ -58,6 +68,8 @@ internal static class GmailPayloadTests
             transport.Mode = ResponseMode.WrongReference;
             Check((await gmail.ReviewInboxAsync(workspaceId, factory)).Count == 0,
                 "unrelated reply reference is not correlated");
+            await RejectAsync(() => gmail.ScanAutomationAsync(workspaceId, factory),
+                "ambiguous replies stop automated sending instead of passing silently");
             transport.Mode = ResponseMode.BadBase64;
             Check((await gmail.ReviewInboxAsync(workspaceId, factory)).Single().Body == "",
                 "invalid base64 is not presented as genuine text");
