@@ -35,6 +35,7 @@ static async Task MustReject(Func<Task> action, string scenario)
 }
 
 await ApprovedSendTests.RunAsync();
+await BatchInquiryTests.RunAsync();
 await ProviderMessageTests.RunAsync();
 await GmailCorrelationTests.RunAsync();
 
@@ -183,8 +184,7 @@ try
 }
 finally
 {
-    try { Directory.Delete(migrationTestRoot, recursive: true); }
-    catch { /* a test-only SQLite handle may remain on Windows */ }
+    await TestDataCleanup.DirectoryAsync(migrationTestRoot);
 }
 
 // Local recovery: immutable, checked SQLite snapshots (not raw WAL/SHM copies),
@@ -264,8 +264,7 @@ try
 }
 finally
 {
-    try { Directory.Delete(recoveryTestRoot, recursive: true); }
-    catch { /* A temporary SQLite file may remain on Windows. */ }
+    await TestDataCleanup.DirectoryAsync(recoveryTestRoot);
 }
 
 // Google-first signup requires a positive verified-email claim and never guesses.
@@ -361,7 +360,7 @@ try
           await signupAccounts.Memberships.CountAsync() == 2,
         "email collisions and unverified identities cannot create or hijack workspaces");
 }
-finally { try { Directory.Delete(signupDirectory, recursive: true); } catch { } }
+finally { await TestDataCleanup.DirectoryAsync(signupDirectory); }
 
 // Google identity login and Gmail authorization intentionally share a configurable
 // OAuth client but retain separate callbacks/scopes and explicit account linking.
@@ -421,7 +420,7 @@ try
     await store.DisconnectAsync(1);
     Check(await store.LoadAsync(1) is null, "Gmail local authorization can be disconnected");
 }
-finally { try { Directory.Delete(mailboxFixture, recursive: true); } catch { } }
+finally { await TestDataCleanup.DirectoryAsync(mailboxFixture); }
 
 var encodedBody = GmailMailboxService.Base64Url(Encoding.UTF8.GetBytes(
     "Thanks, we are interested in a vendor call."));
@@ -674,7 +673,7 @@ try
     await File.WriteAllTextAsync(Path.Combine(usageDir, "search-requests.json"), "{ invalid");
     await MustReject(async () => { await usage.GetAsync(); }, "corrupt usage ledger fails closed");
 }
-finally { if (Directory.Exists(usageDir)) Directory.Delete(usageDir, recursive: true); }
+finally { await TestDataCleanup.DirectoryAsync(usageDir); }
 
 // Browser-render path is explicitly opt-in and must never follow unsafe destinations.
 var browserRoot = new Uri("https://www.example.org/");
@@ -792,7 +791,7 @@ try
     Check((await retained.LoadAsync(1)).Name == fleetProfile.Name,
         "corrupted profile for one business does not affect another business");
 }
-finally { if (Directory.Exists(profileDirectory)) Directory.Delete(profileDirectory, recursive: true); }
+finally { await TestDataCleanup.DirectoryAsync(profileDirectory); }
 
 // A 200 OK status can return misleading HTML. Test quality checks without external HTTP.
 var generalResearch = ResearchProfileCatalog.Default();
@@ -949,7 +948,7 @@ try
             (DiscoveryRoute)999), "review routing rejects unknown queue choices");
 
     }
-    finally { if (Directory.Exists(discoveryPath)) Directory.Delete(discoveryPath, recursive: true); }
+    finally { await TestDataCleanup.DirectoryAsync(discoveryPath); }
     var researchFlow = new OutreachService(factory, new DryRunEmail(), new FixedWorkspaceAccess(1), new FakeResearcher());
     await researchFlow.ImportAsync("Website Research Co | South | https://www.example.org | vendor@example.org");
     var researchId = (await researchFlow.ListProspectsAsync()).Single(p => p.CompanyName == "Website Research Co").Id;
@@ -1121,7 +1120,7 @@ try
 }
 finally
 {
-    try { File.Delete(temporaryPath); } catch { /* SQLite may have left temporary files */ }
+    await TestDataCleanup.SqliteFileAsync(temporaryPath);
 }
 
 sealed class TestFactory(DbContextOptions<OutreachDbContext> options) : IDbContextFactory<OutreachDbContext>
