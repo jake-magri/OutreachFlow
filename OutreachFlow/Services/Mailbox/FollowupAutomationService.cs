@@ -357,6 +357,24 @@ public sealed class FollowupAutomationService(
             if (j.State != "Queued") return;
             workspace = j.WorkspaceId; sender = j.From;
         }
+        // The original approving user must still own this workspace at
+        // send time. Revoked owner privileges invalidate unattended approval.
+        await using (var auth = await accounts.CreateDbContextAsync(ct))
+        {
+            var job = await factory.CreateDbContextAsync(ct);
+            await using (job)
+            {
+                var approved = await job.FollowupJobs.AsNoTracking()
+                    .SingleAsync(j => j.Id == id, ct);
+                if (!await auth.Memberships.AsNoTracking().AnyAsync(m =>
+                    m.UserId == approved.ApprovedByUserId &&
+                    m.WorkspaceId == approved.WorkspaceId && m.Role == "Owner", ct))
+                {
+                    await HoldJobAsync(id, "Approving owner no longer has workspace permission.", ct);
+                    return;
+                }
+            }
+        }
         string? token = null;
         // The workspace poll notices replies while waiting. Repeat the read-only
         // check for EACH due email, so a long multi-recipient batch cannot rely
