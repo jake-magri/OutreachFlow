@@ -116,7 +116,7 @@ internal static class ApprovedSendTests
             await Reject(() => flow.SimulateInitialSendAsync(timeoutId), "simulation cannot restart a real dispatch");
             await TransportAsync(root);
         }
-        finally { Directory.Delete(root, true); }
+        finally { await TestDataCleanup.DirectoryAsync(root); }
     }
 
     private static async Task TransportAsync(string root)
