@@ -187,7 +187,11 @@ else
                     <button class="button" @onclick="CancelSchedule">Cancel pending schedule</button>
                 </div>
             }
-            <p class="help">Sending/Uncertain steps cannot be retried or resumed automatically; inspect Gmail and reconcile manually.</p>
+            @foreach (var uncertain in schedule.Where(j => j.State == "Uncertain" && j.Kind == "Email"))
+            {
+                <button class="button" @onclick="() => ReconcileSchedule(uncertain.Id)">Check Gmail Sent for follow-up @uncertain.Step</button>
+            }
+            <p class="help">Uncertain sends are never retried. Check Gmail Sent to reconcile a confirmed acceptance, then explicitly resume any held later steps.</p>
         }
         else if (p.Status == ProspectStatus.AwaitingReply &&
                  details.Messages.Any(m => !m.IsSimulation && m.Direction == "Outbound"))
@@ -335,6 +339,11 @@ else
             Id, action);
         sequencePreview = null; sequenceConfirmed = false;
     }, "Follow-up schedule updated; no email was sent by this action.");
+    private Task ReconcileSchedule(int jobId) => ScheduleAction(async () =>
+    {
+        await Followups.ReconcileAsync((await Authentication.GetAuthenticationStateAsync()).User,
+            Id, jobId);
+    }, "Reconciliation checked Gmail Sent without sending new email.");
     private Task PauseSchedule() => ControlSchedule("pause");
     private Task ResumeSchedule() => ControlSchedule("resume");
     private Task CancelSchedule() => ControlSchedule("cancel");
