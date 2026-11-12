@@ -77,6 +77,13 @@ internal static class FollowupAutomationTests
                 "owner previews snapshotted exact follow-up message bodies");
             await Reject(() => service.ApproveAsync(owner, first, "wrong-hash"),
                 "unreviewed sequence cannot be authorized");
+            // Approval is for the date shown, not just the saved templates.
+            // Advancing to another business day invalidates the old snapshot.
+            var originalNow = clock.UtcNow;
+            clock.UtcNow = clock.UtcNow.AddDays(1);
+            await Reject(() => service.ApproveAsync(owner, first, preview.Hash),
+                "due-date change invalidates previously reviewed scheduling approval");
+            clock.UtcNow = originalNow;
             await service.ApproveAsync(owner, first, preview.Hash);
             var jobs = await service.ListAsync(owner, first);
             Check(jobs.Count == 3 && jobs[0].State == "Queued" &&
@@ -168,6 +175,45 @@ internal static class FollowupAutomationTests
             Check(recovered[0].State == "Sent" && recovered[1].State == "Held" &&
                 gmail.Sends == before, "confirmed Sent match reconciles without resending and holds next step");
             gmail.Found = null;
+
+            // Gmail may accept an already-reserved email while an independent
+            // reviewer receives a reply. Its audit must persist, but subsequent
+            // jobs must be cancelled and the reply handoff preserved.
+            var raceProspect = await NewProspect("Sequence Race");
+            await service.ApproveAsync(owner, raceProspect,
+                (await service.PreviewAsync(owner, raceProspect)).Hash);
+            var raceDue = (await service.ListAsync(owner, raceProspect))[0].DueUtc;
+            gmail.OnSend = async job =>
+            {
+                if (job.ProspectId != raceProspect) return;
+                await using var raceDb = business.CreateDbContext();
+                var p = await raceDb.Prospects.SingleAsync(p => p.Id == raceProspect);
+                p.Status = ProspectStatus.NeedsAction;
+                p.AutomationPaused = true;
+                p.NextAction = "Review inbound reply before any more outreach";
+                p.NextStepDueUtc = null;
+                raceDb.Messages.Add(new OutreachMessage {
+                    ProspectId = raceProspect, Direction = "Inbound",
+                    Classification = "Gmail auto-detected: Unclassified", Body = "Reply during send",
+                    IsSimulation = false
+                });
+                await raceDb.SaveChangesAsync();
+            };
+            clock.UtcNow = new DateTimeOffset(raceDue.AddMinutes(1), TimeSpan.Zero);
+            await service.TickAsync();
+            gmail.OnSend = null;
+            var raced = await service.ListAsync(owner, raceProspect);
+            await using (var db = business.CreateDbContext())
+            {
+                var p = (await db.Prospects.FindAsync(raceProspect))!;
+                Check(raced[0].State == "Sent" &&
+                    raced.Skip(1).All(j => j.State == "Cancelled") &&
+                    p.Status == ProspectStatus.NeedsAction && p.AutomationPaused &&
+                    p.NextAction == "Review inbound reply before any more outreach" &&
+                    p.NextStepDueUtc is null,
+                    "reply during Gmail acceptance cancels all future sends and preserves handoff");
+            }
+            before = gmail.Sends;
 
             var blockedProspect = await NewProspect("Sequence D");
             await service.ApproveAsync(owner, blockedProspect,
@@ -262,18 +308,20 @@ internal static class FollowupAutomationTests
         public int Sends;
         public List<string> ThreadIds = [];
         public GmailDelivery? Found { get; set; }
+        public Func<FollowupJob, Task>? OnSend { get; set; }
         public Task<string> PrepareAsync(int workspaceId, string sender, CancellationToken ct) =>
             Task.FromResult("fixture-access-token");
         public Task<GmailDelivery> SendAsync(string token, OutboundDispatch d, CancellationToken ct) =>
             throw new NotSupportedException();
         public Task<GmailDelivery?> FindSentAsync(int workspaceId, OutboundDispatch d, CancellationToken ct) =>
             Task.FromResult(Found);
-        public Task<GmailDelivery> SendFollowupAsync(string token, FollowupJob job, CancellationToken ct)
+        public async Task<GmailDelivery> SendFollowupAsync(string token, FollowupJob job, CancellationToken ct)
         {
             if (FailUnknown) throw new TaskCanceledException("unknown Gmail result");
             Sends++;
             ThreadIds.Add(job.ThreadId);
-            return Task.FromResult(new GmailDelivery("followup-" + Sends, job.ThreadId));
+            if (OnSend is not null) await OnSend(job);
+            return new GmailDelivery("followup-" + Sends, job.ThreadId);
         }
     }
 }
