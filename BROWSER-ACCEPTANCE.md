@@ -15,7 +15,7 @@ dotnet run --project OutreachFlow.BrowserTests -c Release --no-build
 
 If `pwsh` is unavailable on Windows, use the installed PowerShell 7 executable or run the generated `playwright.ps1` with an appropriate PowerShell host. This harness does not require Node, an npm project, a paid testing service, or new app secrets.
 
-The suite starts the compiled `OutreachFlow.dll` in a random loopback HTTPS port with a unique temporary working directory and explicit `ConnectionStrings__*` settings. It creates a test-only owner with a nonproduction password, uses example.org fixture addresses, drives real form submissions and Blazor components, and destroys the temporary data after completion.
+The suite starts the compiled `OutreachFlow.dll` on a random loopback HTTPS port with a unique temporary working directory and explicit `ConnectionStrings__*` settings. It creates a test-only owner with a nonproduction password, uses example.org fixture addresses, and drives real form submissions and Blazor components. **On success or failure**, the harness disposes the browser context/driver, terminates the disposable application process, then removes the entire test working directory, including both SQLite files and sidecars, token fixtures and local key material. Cleanup retries briefly for Windows file-handle release; a failed cleanup causes the test to fail rather than silently leaving data behind.
 
 **No live Gmail or Tavily**: the harness deliberately overrides provider credentials with empty values and sets `Gmail:EnableSending=false`. It does not call public websites, **send real emails**, read your mailbox or modify your real `outreachflow.db` databases. The test uses the simulated batch mode and never approves Gmail sending. Do not configure this harness to use production databases.
 
@@ -38,7 +38,7 @@ The browser driver uses role/text selectors where practical, and scopes repeated
 - `failure-trace.zip`: Playwright trace for step-by-step inspection.
 - `app.log`: last 200 lines of disposable localhost app output.
 
-These files are ignored by Git and retained for only seven days in GitHub Actions. Traces can contain fixture form data and page content; **never use real secrets or customer records in browser fixtures**. To inspect a trace, open it in Playwright's local trace viewer with the matching browser tool version.
+**Artifact lifecycle:** a new run removes the previous local `OutreachFlow.BrowserTests/TestResults/` captures. Successful runs leave no screenshots, traces or copied application logs. Failed runs preserve only the screenshot, Playwright trace and last 200 lines of the isolated app log for diagnosis. GitHub Actions uploads these only on failure and retains them for seven days. Traces can contain fixture form data and page content; **never use real secrets or customer records in browser fixtures**. To inspect a trace, open it in Playwright's local trace viewer with the matching browser tool version. Cleanup of temporary databases still happens even when failure artifacts are preserved.
 
 The harness does not replace existing offline smoke tests, migration tests or the real-Google read-only acceptance for issue #13. Provider-thread logic, quotas, concurrency, malformed MIME and mailbox failure handling belong in deterministic service-level fixtures. Browser tests exercise navigation and state integration, not external Google delivery.
 
