@@ -9,9 +9,10 @@ if (!File.Exists(appDll))
     throw new InvalidOperationException("Build Release first: dotnet build OutreachFlow.slnx -c Release");
 
 var artifacts = Path.Combine(root, "OutreachFlow.BrowserTests", "TestResults");
-Directory.CreateDirectory(artifacts);
+// Remove stale local failure captures from a previous run; only the latest
+// failing run retains diagnostic artifacts. Successful runs leave none.
+await RemoveTestDirectoryAsync(artifacts);
 var temporary = Path.Combine(Path.GetTempPath(), "outreachflow-ui-" + Guid.NewGuid().ToString("N"));
-Directory.CreateDirectory(temporary);
 var port = FreePort();
 var url = $"https://127.0.0.1:{port}";
 using var app = new Process { StartInfo = new ProcessStartInfo("dotnet") {
@@ -41,9 +42,12 @@ IPlaywright? playwright = null;
 IBrowser? browser = null;
 IBrowserContext? context = null;
 IPage? page = null;
+var started = false;
 try
 {
-    if (!app.Start()) throw new InvalidOperationException("Could not launch OutreachFlow.");
+    Directory.CreateDirectory(temporary);
+    started = app.Start();
+    if (!started) throw new InvalidOperationException("Could not launch OutreachFlow.");
     app.BeginOutputReadLine();
     app.BeginErrorReadLine();
     await ReadyAsync(url, app);
@@ -157,7 +161,9 @@ try
 }
 catch (Exception ex)
 {
+    Environment.ExitCode = 1;
     Console.Error.WriteLine("FAIL: " + ex);
+    Directory.CreateDirectory(artifacts);
     if (page is not null)
         try { await page.ScreenshotAsync(new PageScreenshotOptions {
             Path = Path.Combine(artifacts, "failure.png"), FullPage = true
@@ -172,16 +178,59 @@ catch (Exception ex)
 }
 finally
 {
-    if (context is not null) await context.DisposeAsync();
-    if (browser is not null) await browser.DisposeAsync();
-    playwright?.Dispose();
-    if (!app.HasExited) {
+    // Always release browser and app handles before deleting the SQLite
+    // databases, DataProtection keys, cookies and browser-owned temp files.
+    await CleanupStepAsync("Playwright context", async () =>
+    {
+        if (context is not null) await context.DisposeAsync();
+    });
+    await CleanupStepAsync("Chromium process", async () =>
+    {
+        if (browser is not null) await browser.DisposeAsync();
+    });
+    await CleanupStepAsync("Playwright driver", () =>
+    {
+        playwright?.Dispose();
+        return Task.CompletedTask;
+    });
+    await CleanupStepAsync("OutreachFlow process", async () =>
+    {
+        if (!started || app.HasExited) return;
         app.Kill(entireProcessTree: true);
         await app.WaitForExitAsync();
+    });
+    await CleanupStepAsync("test databases and local state", () => RemoveTestDirectoryAsync(temporary));
+    if (Environment.ExitCode == 0)
+        await CleanupStepAsync("successful-run diagnostics", () => RemoveTestDirectoryAsync(artifacts));
+}
+
+static async Task CleanupStepAsync(string name, Func<Task> action)
+{
+    try { await action(); }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine("FAIL: cleanup of " + name + ": " + ex.Message);
+        Environment.ExitCode = 1;
     }
-    try { Directory.Delete(temporary, recursive: true); }
-    catch (IOException) { /* Windows may release SQLite/browser handles shortly after exit. */ }
-    catch (UnauthorizedAccessException) { /* See browser test runbook for cleanup. */ }
+}
+
+static async Task RemoveTestDirectoryAsync(string path)
+{
+    // Windows may hold a released SQLite or Chromium file briefly after exit.
+    // A bounded retry is safer than swallowing the error or deleting user data.
+    Exception? last = null;
+    for (var attempt = 0; attempt < 10; attempt++)
+    {
+        try
+        {
+            if (Directory.Exists(path)) Directory.Delete(path, recursive: true);
+            return;
+        }
+        catch (IOException ex) { last = ex; }
+        catch (UnauthorizedAccessException ex) { last = ex; }
+        await Task.Delay(150 * (attempt + 1));
+    }
+    throw new IOException("Unable to remove isolated test directory: " + path, last);
 }
 
 static async Task Visible(ILocator locator) =>
