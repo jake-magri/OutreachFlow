@@ -559,10 +559,14 @@ public sealed partial class GmailMailboxService(IConfiguration config, IHttpClie
             .SingleAsync(w => w.Id == workspaceId, ct);
         if (!connection.Email.Equals(workspace.SenderEmail, StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException("Gmail sender changed. Scheduled delivery blocked.");
+        var activeIds = (await db.FollowupJobs.AsNoTracking()
+            .Where(j => j.WorkspaceId == workspaceId && j.State == "Queued")
+            .Select(j => j.ProspectId).Distinct().ToListAsync(ct)).ToHashSet();
         var anchors = GmailReplyCorrelation.UniqueThreads(
-            await SentAnchorsAsync(db, workspaceId, connection.Email, ct));
+            (await SentAnchorsAsync(db, workspaceId, connection.Email, ct))
+                .Where(a => activeIds.Contains(a.ProspectId)));
         if (anchors.Count == 0)
-            throw new InvalidOperationException("No verified Gmail outbound anchors. Scheduled delivery blocked.");
+            throw new InvalidOperationException("No verified active Gmail conversation anchors. Scheduled delivery blocked.");
 
         var token = await TokenAsync(connection, ct);
         using var list = await GetAsync("messages?labelIds=INBOX&maxResults=100&q=" +
