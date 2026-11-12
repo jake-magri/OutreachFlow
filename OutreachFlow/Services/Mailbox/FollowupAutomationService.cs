@@ -27,7 +27,7 @@ public sealed class GmailAutomationInbox(GmailMailboxService gmail) : IAutomatio
     public Task<bool> ImportUnclassifiedAsync(int workspaceId, int prospectId, string messageId,
         IDbContextFactory<OutreachDbContext> factory, CancellationToken ct) =>
         gmail.ImportReviewedInboundAsync(workspaceId, prospectId, messageId,
-            ReplyCategory.Unclear, factory, ct);
+            ReplyCategory.Unclear, factory, ct, detectedAutomatically: true);
 }
 
 public sealed record FollowupPreview(string From, string To, string Subject,
