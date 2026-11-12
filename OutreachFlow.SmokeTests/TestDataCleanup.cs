@@ -9,6 +9,7 @@ internal static class TestDataCleanup
 {
     public static async Task DirectoryAsync(string path)
     {
+        ValidateGeneratedPath(path);
         SqliteConnection.ClearAllPools();
         await RetryAsync(() =>
         {
@@ -18,12 +19,26 @@ internal static class TestDataCleanup
 
     public static async Task SqliteFileAsync(string path)
     {
+        ValidateGeneratedPath(path);
         SqliteConnection.ClearAllPools();
         await RetryAsync(() =>
         {
             foreach (var suffix in new[] { "", "-wal", "-shm" })
                 if (File.Exists(path + suffix)) File.Delete(path + suffix);
         }, path);
+    }
+
+    private static void ValidateGeneratedPath(string path)
+    {
+        var fullPath = Path.GetFullPath(path);
+        var tempRoot = Path.GetFullPath(Path.GetTempPath()).TrimEnd(
+            Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        var comparison = OperatingSystem.IsWindows()
+            ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        if (!fullPath.StartsWith(tempRoot, comparison) ||
+            !Path.GetFileName(fullPath).StartsWith("outreachflow-", comparison))
+            throw new InvalidOperationException(
+                "Refusing to clean anything outside an OutreachFlow-generated temporary path: " + path);
     }
 
     private static async Task RetryAsync(Action cleanup, string path)
