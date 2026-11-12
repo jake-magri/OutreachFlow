@@ -159,6 +159,26 @@ else
     <section class="panel spaced" data-testid="followup-schedule">
         <div class="panel-heading"><h2>Gmail follow-up schedule</h2><small>Approved messages only</small></div>
         <p>Follow-ups use your approved Gmail sender, business-day settings and immutable message snapshots. Every due send checks the inbox first; any reply or uncertain mailbox result stops automatic sending.</p>
+        @if (details.Messages.FirstOrDefault(m => m.Direction == "Inbound" &&
+                 m.Classification == "Gmail auto-detected: Unclassified") is OutreachMessage detected)
+        {
+            <div class="evidence" data-testid="detected-gmail-reply">
+                <h3>Detected Gmail reply needs your classification</h3>
+                <p><strong>@detected.Subject</strong></p>
+                <pre style="white-space:pre-wrap;overflow-wrap:anywhere">@detected.Body</pre>
+                <p>Pending follow-ups were stopped automatically. Classify this existing message without importing or sending anything again.</p>
+                <label>Reply category</label>
+                <select @bind="detectedReplyCategory">
+                    <option value="Unclear">Needs review / unclear</option>
+                    <option value="Interested">Interested / warm lead</option>
+                    <option value="ApplicationInstructions">Application instructions</option>
+                    <option value="HasQuestion">Has a question</option>
+                    <option value="Declined">Declined / opt out</option>
+                    <option value="OutOfOffice">Out of office</option>
+                </select>
+                <button class="button primary" @onclick="() => ClassifyDetectedReply(detected.Id)">Classify detected Gmail reply</button>
+            </div>
+        }
         @if (!Followups.Enabled)
         {
             <p class="help">Automatic follow-ups are currently disabled in local configuration. No scheduled mail can be sent. Set <code>Followups:Enabled=true</code> only after reviewing the feature and enabling Gmail sending.</p>
@@ -274,6 +294,7 @@ else
     private IReadOnlyList<FollowupJob> schedule = [];
     private FollowupPreview? sequencePreview;
     private bool sequenceConfirmed;
+    private ReplyCategory detectedReplyCategory = ReplyCategory.Unclear;
     private ResearchOutcome researchOutcome = ResearchOutcome.NotReviewed;
     private string researchUrl = "";
     private string researchTitle = "";
@@ -344,6 +365,13 @@ else
         await Followups.ReconcileAsync((await Authentication.GetAuthenticationStateAsync()).User,
             Id, jobId);
     }, "Reconciliation checked Gmail Sent without sending new email.");
+    private Task ClassifyDetectedReply(int messageId) => ScheduleAction(async () =>
+    {
+        await Followups.ClassifyDetectedReplyAsync(
+            (await Authentication.GetAuthenticationStateAsync()).User, Id,
+            messageId, detectedReplyCategory);
+        detectedReplyCategory = ReplyCategory.Unclear;
+    }, "Existing Gmail reply classified; all scheduled sends remain stopped.");
     private Task PauseSchedule() => ControlSchedule("pause");
     private Task ResumeSchedule() => ControlSchedule("resume");
     private Task CancelSchedule() => ControlSchedule("cancel");
