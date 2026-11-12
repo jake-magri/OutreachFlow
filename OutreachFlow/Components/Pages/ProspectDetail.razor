@@ -1,5 +1,10 @@
 @page "/prospects/{Id:int}"
 @inject OutreachService Flow
+@using OutreachFlow.Services.Mailbox
+@using OutreachFlow.Models
+@using Microsoft.AspNetCore.Components.Authorization
+@inject FollowupAutomationService Followups
+@inject AuthenticationStateProvider Authentication
 <PageTitle>Prospect · OutreachFlow</PageTitle>
 @if (details is null)
 {
@@ -151,6 +156,65 @@ else
             }
         </section>
     </div>
+    <section class="panel spaced" data-testid="followup-schedule">
+        <div class="panel-heading"><h2>Gmail follow-up schedule</h2><small>Approved messages only</small></div>
+        <p>Follow-ups use your approved Gmail sender, business-day settings and immutable message snapshots. Every due send checks the inbox first; any reply or uncertain mailbox result stops automatic sending.</p>
+        @if (!Followups.Enabled)
+        {
+            <p class="help">Automatic follow-ups are currently disabled in local configuration. No scheduled mail can be sent. Set <code>Followups:Enabled=true</code> only after reviewing the feature and enabling Gmail sending.</p>
+        }
+        @if (schedule.Count > 0)
+        {
+            @foreach (var job in schedule)
+            {
+                <div class="evidence">
+                    <strong>@(job.Kind == "ManualHandoff" ? "Manual no-response handoff" : $"Follow-up {job.Step}") · @job.State</strong>
+                    <p><small>@(job.DueUtc == DateTime.MaxValue ? "After previous approved step" : job.DueUtc.ToString("yyyy-MM-dd HH:mm") + " UTC")</small></p>
+                    <p>@job.Result</p>
+                </div>
+            }
+            @if (schedule.Any(j => j.State is "Queued" or "Held"))
+            {
+                <div class="actions">
+                    @if (schedule.Any(j => j.State == "Queued"))
+                    {
+                        <button class="button" @onclick="PauseSchedule">Pause schedule</button>
+                    }
+                    @if (schedule.Any(j => j.State == "Held" && j.AttemptedUtc is null) && Followups.Enabled)
+                    {
+                        <button class="button" @onclick="ResumeSchedule">Resume pending schedule</button>
+                    }
+                    <button class="button" @onclick="CancelSchedule">Cancel pending schedule</button>
+                </div>
+            }
+            <p class="help">Sending/Uncertain steps cannot be retried or resumed automatically; inspect Gmail and reconcile manually.</p>
+        }
+        else if (p.Status == ProspectStatus.AwaitingReply &&
+                 details.Messages.Any(m => !m.IsSimulation && m.Direction == "Outbound"))
+        {
+            <button class="button" @onclick="PreviewSequence" disabled="@(!Followups.Enabled)">Review proposed follow-up sequence</button>
+            @if (sequencePreview is not null)
+            {
+                <p><strong>From:</strong> @sequencePreview.From · <strong>To:</strong> @sequencePreview.To</p>
+                <p><strong>First due:</strong> @sequencePreview.FirstDueUtc.ToString("yyyy-MM-dd HH:mm") UTC</p>
+                <strong>Follow-up 1 · @sequencePreview.Subject</strong>
+                <pre style="white-space:pre-wrap;overflow-wrap:anywhere">@sequencePreview.FirstBody</pre>
+                @if (sequencePreview.FollowupCount == 2)
+                {
+                    <strong>Follow-up 2 · after first accepted send</strong>
+                    <pre style="white-space:pre-wrap;overflow-wrap:anywhere">@sequencePreview.SecondBody</pre>
+                }
+                <p>After the final no-response window, OutreachFlow hands the prospect to you. It never treats silence as interest.</p>
+                <label class="checkbox"><input type="checkbox" @bind="sequenceConfirmed" />
+                    Approve the exact templates, recipient and capped follow-up sequence above.</label>
+                <button class="button primary" disabled="@(!sequenceConfirmed)" @onclick="ApproveSequence">Approve and schedule follow-ups</button>
+            }
+        }
+        else
+        {
+            <p class="help">A confirmed real Gmail inquiry awaiting a reply is required before scheduling. Simulated and externally attested sends are not eligible.</p>
+        }
+    </section>
     <section class="panel spaced">
         <div class="panel-heading"><h2>Manual follow-up &amp; ownership</h2><small>Every action is recorded locally</small></div>
         @if (p.AutomationPaused)
@@ -203,6 +267,9 @@ else
     [Parameter] public int Id { get; set; }
     private ProspectDetails? details;
     private string alert = "";
+    private IReadOnlyList<FollowupJob> schedule = [];
+    private FollowupPreview? sequencePreview;
+    private bool sequenceConfirmed;
     private ResearchOutcome researchOutcome = ResearchOutcome.NotReviewed;
     private string researchUrl = "";
     private string researchTitle = "";
@@ -231,7 +298,46 @@ else
             nextDateIso = details.Prospect.NextActionDate?.ToString("yyyy-MM-dd") ?? "";
         }
     }
-    private async Task Reload() => details = await Flow.GetDetailsAsync(Id);
+    private async Task Reload()
+    {
+        details = await Flow.GetDetailsAsync(Id);
+        try { schedule = details is null ? [] :
+            await Followups.ListAsync((await Authentication.GetAuthenticationStateAsync()).User, Id); }
+        catch (UnauthorizedAccessException) { schedule = []; }
+    }
+    private async Task ScheduleAction(Func<Task> action, string result)
+    {
+        try { await action(); alert = result; }
+        catch (Exception ex) { alert = ex.Message; }
+        await Reload();
+    }
+    private async Task PreviewSequence()
+    {
+        try
+        {
+            sequencePreview = await Followups.PreviewAsync(
+                (await Authentication.GetAuthenticationStateAsync()).User, Id);
+            sequenceConfirmed = false; alert = "";
+        }
+        catch (Exception ex) { alert = ex.Message; sequencePreview = null; }
+    }
+    private Task ApproveSequence() => ScheduleAction(async () =>
+    {
+        if (!sequenceConfirmed || sequencePreview is null)
+            throw new InvalidOperationException("Review and approve the exact sequence first.");
+        await Followups.ApproveAsync((await Authentication.GetAuthenticationStateAsync()).User,
+            Id, sequencePreview.Hash);
+        sequencePreview = null; sequenceConfirmed = false;
+    }, "Follow-up sequence scheduled; no email was sent by this action.");
+    private Task ControlSchedule(string action) => ScheduleAction(async () =>
+    {
+        await Followups.ControlAsync((await Authentication.GetAuthenticationStateAsync()).User,
+            Id, action);
+        sequencePreview = null; sequenceConfirmed = false;
+    }, "Follow-up schedule updated; no email was sent by this action.");
+    private Task PauseSchedule() => ControlSchedule("pause");
+    private Task ResumeSchedule() => ControlSchedule("resume");
+    private Task CancelSchedule() => ControlSchedule("cancel");
     private async Task Execute(Func<Task> action)
     {
         try { await action(); alert = "Saved locally. OutreachFlow sent no email."; }
