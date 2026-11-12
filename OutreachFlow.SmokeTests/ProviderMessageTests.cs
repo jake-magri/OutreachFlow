@@ -100,7 +100,7 @@ internal static class ProviderMessageTests
             await RejectConstraintAsync(factory, otherWorkspaceId, secondId, "message-3",
                 "database rejects provider records with inconsistent prospect workspace");
         }
-        finally { Directory.Delete(root, recursive: true); }
+        finally { await TestDataCleanup.DirectoryAsync(root); }
     }
 
     private static async Task RejectConstraintAsync(TestFactory factory, int workspaceId,
