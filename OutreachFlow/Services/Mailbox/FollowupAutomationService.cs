@@ -358,10 +358,24 @@ public sealed class FollowupAutomationService(
             workspace = j.WorkspaceId; sender = j.From;
         }
         string? token = null;
-        // The manual handoff performs no network sending.
+        // The workspace poll notices replies while waiting. Repeat the read-only
+        // check for EACH due email, so a long multi-recipient batch cannot rely
+        // solely on a stale workspace-level result.
         await using (var db = await factory.CreateDbContextAsync(ct))
+        {
             if (await db.FollowupJobs.AnyAsync(j => j.Id == id && j.Kind == "Email", ct))
+            {
+                var freshReplies = await inbox.ScanAsync(workspace, factory, ct);
+                foreach (var reply in freshReplies)
+                {
+                    await inbox.ImportUnclassifiedAsync(workspace, reply.ProspectId,
+                        reply.MessageId, factory, ct);
+                    await CancelProspectPendingAsync(reply.ProspectId, workspace,
+                        "Gmail reply detected before dispatch", ct);
+                }
                 token = await gmail.PrepareAsync(workspace, sender, ct);
+            }
+        }
 
         await using (var db = await factory.CreateDbContextAsync(ct))
         {
