@@ -101,7 +101,7 @@ public sealed class FollowupAutomationService(
                 outgoing.RfcMessageId, anchor.ThreadId, count, body1, body2,
                 w.FirstFollowupBusinessDays, w.SecondFollowupBusinessDays,
                 w.NoResponseAfterBusinessDays, w.TimeZoneId, w.SendingStartHour, w.SendingEndHour,
-                w.DailySendLimit, p.UpdatedUtc }))));
+                w.DailySendLimit, p.UpdatedUtc, FirstDueUtc = due }))));
         return new(w.SenderEmail, p.ContactEmail, outgoing.Subject, body1, body2, due, count, hash);
     }
 
@@ -552,27 +552,47 @@ public sealed class FollowupAutomationService(
         j.State = "Sent"; j.CompletedUtc = clock.GetUtcNow().UtcDateTime;
         j.GmailMessageId = delivery.MessageId; j.Result = "Gmail accepted follow-up; inbox delivery is unconfirmed.";
         p.Attempts++;
-        var next = await db.FollowupJobs.SingleOrDefaultAsync(x => x.WorkspaceId == j.WorkspaceId &&
-            x.ProspectId == p.Id && x.Step == (j.Step == p.PlannedFollowups ? 3 : j.Step + 1), ct);
-        if (next is not null)
+        // A reply or manual takeover can happen while Gmail accepts a reserved
+        // message. Record Gmail acceptance but never reopen pending follow-ups.
+        var interrupted = p.Status != ProspectStatus.AwaitingReply ||
+            p.AutomationPaused || !await NoInboundAsync(db, p.Id, ct);
+        if (interrupted)
         {
-            var days = j.Step == p.PlannedFollowups ? p.NoResponseDelayDays : p.SecondFollowupDelayDays;
-            next.DueUtc = BusinessCalendar.AddBusinessDays(clock.GetUtcNow().UtcDateTime,
-                Math.Clamp(days, 1, 30), p.SequenceTimeZoneId, p.SequenceStartHour);
-            if (reconciled)
+            foreach (var pending in await db.FollowupJobs.Where(x =>
+                x.WorkspaceId == j.WorkspaceId && x.ProspectId == p.Id &&
+                x.Step > j.Step && (x.State == "Queued" || x.State == "Held")).ToListAsync(ct))
             {
-                next.State = "Held";
-                next.Result = "Previous Gmail acceptance reconciled; review before resuming.";
-                p.AutomationPaused = true;
-                p.NextStepDueUtc = null;
-                p.NextAction = "Review reconciled Gmail result and explicitly resume pending schedule";
+                pending.State = "Cancelled";
+                pending.Result = "Sequence stopped while Gmail accepted an in-flight message.";
             }
-            else
+            p.AutomationPaused = true;
+            p.NextStepDueUtc = null;
+            // Preserve the reply classification and next action from the owner.
+        }
+        else
+        {
+            var next = await db.FollowupJobs.SingleOrDefaultAsync(x => x.WorkspaceId == j.WorkspaceId &&
+                x.ProspectId == p.Id && x.Step == (j.Step == p.PlannedFollowups ? 3 : j.Step + 1), ct);
+            if (next is not null)
             {
-                p.NextStepDueUtc = next.DueUtc;
-                p.NextAction = next.Kind == "ManualHandoff"
-                    ? "Automatic sequence complete; handoff when final response window closes"
-                    : "Next approved Gmail follow-up queued";
+                var days = j.Step == p.PlannedFollowups ? p.NoResponseDelayDays : p.SecondFollowupDelayDays;
+                next.DueUtc = BusinessCalendar.AddBusinessDays(clock.GetUtcNow().UtcDateTime,
+                    Math.Clamp(days, 1, 30), p.SequenceTimeZoneId, p.SequenceStartHour);
+                if (reconciled)
+                {
+                    next.State = "Held";
+                    next.Result = "Previous Gmail acceptance reconciled; review before resuming.";
+                    p.AutomationPaused = true;
+                    p.NextStepDueUtc = null;
+                    p.NextAction = "Review reconciled Gmail result and explicitly resume pending schedule";
+                }
+                else
+                {
+                    p.NextStepDueUtc = next.DueUtc;
+                    p.NextAction = next.Kind == "ManualHandoff"
+                        ? "Automatic sequence complete; handoff when final response window closes"
+                        : "Next approved Gmail follow-up queued";
+                }
             }
         }
         db.Activities.Add(new() { ProspectId = p.Id, Kind = "Gmail follow-up accepted",
