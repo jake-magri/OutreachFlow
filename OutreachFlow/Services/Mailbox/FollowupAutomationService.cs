@@ -183,6 +183,32 @@ public sealed class FollowupAutomationService(
             .OrderBy(j => j.Step).ToListAsync(ct);
     }
 
+    /// <summary>
+    /// Read-only provider reconciliation. An absent Sent match never authorizes a
+    /// retry. A confirmed match completes the recorded send without resending.
+    /// Future steps stay held for owner review after an uncertain result.
+    /// </summary>
+    public async Task ReconcileAsync(ClaimsPrincipal user, int prospectId, int jobId,
+        CancellationToken ct = default)
+    {
+        var workspace = await OwnerAsync(user, ct);
+        await using var db = await factory.CreateDbContextAsync(ct);
+        var job = await db.FollowupJobs.AsNoTracking().SingleAsync(j =>
+            j.Id == jobId && j.ProspectId == prospectId && j.WorkspaceId == workspace, ct);
+        if (job.State != "Uncertain" || job.Kind != "Email")
+            throw new InvalidOperationException("Only an uncertain Gmail follow-up can be reconciled.");
+        var snapshot = new OutboundDispatch {
+            From = job.From, To = job.To, Subject = job.Subject, Body = job.Body,
+            RfcMessageId = job.RfcMessageId, ApprovedUtc = job.ApprovedUtc
+        };
+        var found = await gmail.FindSentAsync(workspace, snapshot, ct);
+        if (found is null)
+            throw new InvalidOperationException("No verified Sent match; leave the step blocked and inspect Gmail.");
+        if (!found.ThreadId.Equals(job.ThreadId, StringComparison.Ordinal))
+            throw new InvalidOperationException("Sent match has a different thread; manual review is required.");
+        await CompleteAsync(jobId, found, ct);
+    }
+
     public async Task ControlAsync(ClaimsPrincipal user, int prospectId, string action, CancellationToken ct = default)
     {
         if (action is not ("pause" or "resume" or "cancel"))
@@ -436,8 +462,10 @@ public sealed class FollowupAutomationService(
         await using var tx = await db.Database.UseTransactionAsync(reservation, ct);
         var j = await db.FollowupJobs.SingleAsync(j => j.Id == id, ct);
         if (j.State == "Sent") return;
-        if (j.State != "Sending" || !delivery.ThreadId.Equals(j.ThreadId, StringComparison.Ordinal))
+        if (j.State is not ("Sending" or "Uncertain") ||
+            !delivery.ThreadId.Equals(j.ThreadId, StringComparison.Ordinal))
             throw new InvalidOperationException("Follow-up provider state changed. Manual reconciliation required.");
+        var reconciled = j.State == "Uncertain";
         var p = await db.Prospects.SingleAsync(p => p.Id == j.ProspectId && p.WorkspaceId == j.WorkspaceId, ct);
         db.ProviderMessages.Add(new() { WorkspaceId = j.WorkspaceId, ProspectId = p.Id,
             MailboxEmail = j.From.ToLowerInvariant(), MessageId = delivery.MessageId, ThreadId = delivery.ThreadId,
@@ -455,10 +483,21 @@ public sealed class FollowupAutomationService(
             var days = j.Step == p.PlannedFollowups ? p.NoResponseDelayDays : p.SecondFollowupDelayDays;
             next.DueUtc = BusinessCalendar.AddBusinessDays(clock.GetUtcNow().UtcDateTime,
                 Math.Clamp(days, 1, 30), p.SequenceTimeZoneId, p.SequenceStartHour);
-            p.NextStepDueUtc = next.DueUtc;
-            p.NextAction = next.Kind == "ManualHandoff"
-                ? "Automatic sequence complete; handoff when final response window closes"
-                : "Next approved Gmail follow-up queued";
+            if (reconciled)
+            {
+                next.State = "Held";
+                next.Result = "Previous Gmail acceptance reconciled; review before resuming.";
+                p.AutomationPaused = true;
+                p.NextStepDueUtc = null;
+                p.NextAction = "Review reconciled Gmail result and explicitly resume pending schedule";
+            }
+            else
+            {
+                p.NextStepDueUtc = next.DueUtc;
+                p.NextAction = next.Kind == "ManualHandoff"
+                    ? "Automatic sequence complete; handoff when final response window closes"
+                    : "Next approved Gmail follow-up queued";
+            }
         }
         db.Activities.Add(new() { ProspectId = p.Id, Kind = "Gmail follow-up accepted",
             Detail = "Step " + j.Step + ": gmail:" + delivery.MessageId });
