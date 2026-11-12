@@ -353,8 +353,11 @@ public sealed partial class GmailMailboxService(IConfiguration config, IHttpClie
     /// </summary>
     public async Task<bool> ImportReviewedInboundAsync(int workspaceId, int prospectId,
         string messageId, ReplyCategory category,
-        IDbContextFactory<OutreachDbContext> factory, CancellationToken ct = default)
+        IDbContextFactory<OutreachDbContext> factory, CancellationToken ct = default,
+        bool detectedAutomatically = false)
     {
+        if (detectedAutomatically && category != ReplyCategory.Unclear)
+            throw new InvalidOperationException("Automatic inbox detection may not classify the reply.");
         if (messageId.Length is < 1 or > 100 || !messageId.All(c =>
                 char.IsAsciiLetterOrDigit(c) || c is '-' or '_'))
             throw new InvalidOperationException("Invalid Gmail message identifier.");
@@ -414,7 +417,8 @@ public sealed partial class GmailMailboxService(IConfiguration config, IHttpClie
         var importedMessage = new OutreachMessage
         {
             ProspectId = prospectId, Direction = "Inbound",
-            Classification = "Gmail reviewed: " + category,
+            Classification = detectedAutomatically
+                ? "Gmail auto-detected: Unclassified" : "Gmail reviewed: " + category,
             Subject = item.Subject, Body = item.Body,
             IsSimulation = false, OccurredUtc = item.ReceivedUtc
         };
@@ -438,6 +442,12 @@ public sealed partial class GmailMailboxService(IConfiguration config, IHttpClie
         };
         prospect.AutomationPaused = true;
         prospect.NextStepDueUtc = null;
+        foreach (var pending in await db.FollowupJobs.Where(j => j.WorkspaceId == workspaceId &&
+            j.ProspectId == prospectId && (j.State == "Queued" || j.State == "Held")).ToListAsync(ct))
+        {
+            pending.State = "Cancelled";
+            pending.Result = "Gmail reply recorded";
+        }
         prospect.NextAction = category switch
         {
             ReplyCategory.Interested => "Personally follow up with interested contact",
@@ -475,12 +485,18 @@ public sealed partial class GmailMailboxService(IConfiguration config, IHttpClie
                               m.WorkspaceId == workspaceId && d.State == "Sent" &&
                               m.Provider == "gmail" && m.MailboxEmail == mailbox &&
                               history.Direction == "Outbound" && !history.IsSimulation &&
+                              history.Classification == "Gmail accepted" &&
                               p.Status != ProspectStatus.Closed && p.Status != ProspectStatus.Suppressed
                           select new { d, p, m }).ToListAsync(ct);
+        var sentFollowups = await db.FollowupJobs.AsNoTracking()
+            .Where(j => j.WorkspaceId == workspaceId && j.Kind == "Email" && j.State == "Sent")
+            .Select(j => new { j.ProspectId, j.RfcMessageId, j.ThreadId }).ToListAsync(ct);
         return sent.Where(x => x.d.From.Equals(mailbox, StringComparison.OrdinalIgnoreCase) &&
                     x.d.To.Equals(x.p.ContactEmail, StringComparison.OrdinalIgnoreCase))
             .Select(x => new GmailSentAnchor(x.p.Id, x.p.CompanyName, x.p.ContactEmail,
-                x.d.From, x.m.ThreadId, x.d.RfcMessageId, x.d.ApprovedUtc)).ToArray();
+                x.d.From, x.m.ThreadId, x.d.RfcMessageId, x.d.ApprovedUtc,
+                sentFollowups.Where(j => j.ProspectId == x.p.Id &&
+                    j.ThreadId == x.m.ThreadId).Select(j => j.RfcMessageId).ToArray())).ToArray();
     }
 
     /// <summary>
@@ -540,4 +556,94 @@ public sealed partial class GmailMailboxService(IConfiguration config, IHttpClie
         }
         return found.OrderByDescending(x => x.ReceivedUtc).ToArray();
     }
+    /// <summary>
+    /// Safety-oriented active-sequence scan. An incomplete, busy or ambiguous inbox
+    /// prevents dispatch; it is never interpreted as proof of no response.
+    /// </summary>
+    public async Task<IReadOnlyList<GmailInboxItem>> ScanAutomationAsync(int workspaceId,
+        IDbContextFactory<OutreachDbContext> factory, CancellationToken ct = default)
+    {
+        var connection = await store.LoadAsync(workspaceId, ct) ??
+            throw new InvalidOperationException("Gmail disconnected. Scheduled delivery blocked.");
+        await using var db = await factory.CreateDbContextAsync(ct);
+        var workspace = await db.Workspaces.AsNoTracking()
+            .SingleAsync(w => w.Id == workspaceId, ct);
+        if (!connection.Email.Equals(workspace.SenderEmail, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("Gmail sender changed. Scheduled delivery blocked.");
+        var activeIds = (await db.FollowupJobs.AsNoTracking()
+            .Where(j => j.WorkspaceId == workspaceId && j.State == "Queued")
+            .Select(j => j.ProspectId).Distinct().ToListAsync(ct)).ToHashSet();
+        var anchors = GmailReplyCorrelation.UniqueThreads(
+            (await SentAnchorsAsync(db, workspaceId, connection.Email, ct))
+                .Where(a => activeIds.Contains(a.ProspectId)));
+        if (anchors.Count == 0)
+            throw new InvalidOperationException("No verified active Gmail conversation anchors. Scheduled delivery blocked.");
+
+        var token = await TokenAsync(connection, ct);
+        using var list = await GetAsync("messages?labelIds=INBOX&maxResults=100&q=" +
+            Uri.EscapeDataString("newer_than:90d"), token, ct);
+        if (list.RootElement.TryGetProperty("nextPageToken", out _) ||
+            !list.RootElement.TryGetProperty("messages", out var messages) ||
+            messages.ValueKind != JsonValueKind.Array || messages.GetArrayLength() >= 100)
+        {
+            // A truly empty inbox can omit the messages field. Distinguish that from
+            // an unparseable or incomplete result using resultSizeEstimate.
+            if (list.RootElement.TryGetProperty("messages", out var m) &&
+                m.ValueKind == JsonValueKind.Array && m.GetArrayLength() == 0 &&
+                !list.RootElement.TryGetProperty("nextPageToken", out _)) return [];
+            if (!list.RootElement.TryGetProperty("messages", out _) &&
+                list.RootElement.TryGetProperty("resultSizeEstimate", out var estimate) &&
+                estimate.ValueKind == JsonValueKind.Number && estimate.GetInt32() == 0 &&
+                !list.RootElement.TryGetProperty("nextPageToken", out _)) return [];
+            throw new InvalidOperationException("Inbox coverage is incomplete; pause follow-ups and review Gmail.");
+        }
+        var seen = (await db.ProviderMessages.AsNoTracking()
+            .Where(m => m.WorkspaceId == workspaceId && m.MailboxEmail == connection.Email)
+            .Select(m => m.MessageId).ToListAsync(ct)).ToHashSet(StringComparer.Ordinal);
+        var found = new List<GmailInboxItem>();
+        foreach (var item in messages.EnumerateArray())
+        {
+            if (item.ValueKind != JsonValueKind.Object ||
+                !item.TryGetProperty("id", out var ident) ||
+                ident.ValueKind != JsonValueKind.String)
+                throw new InvalidOperationException("Invalid Gmail listing; pause scheduled sends.");
+            var id = ident.GetString() ?? "";
+            if (id.Length is < 1 or > 100 || !id.All(c =>
+                char.IsAsciiLetterOrDigit(c) || c is '-' or '_'))
+                throw new InvalidOperationException("Invalid Gmail message ID; pause scheduled sends.");
+            if (seen.Contains(id)) continue;
+            using var detail = await GetAsync("messages/" + Uri.EscapeDataString(id) +
+                "?format=full", token, ct);
+            var root = detail.RootElement;
+            var headers = root.TryGetProperty("payload", out var payload) &&
+                payload.ValueKind == JsonValueKind.Object &&
+                payload.TryGetProperty("headers", out var hs) && hs.ValueKind == JsonValueKind.Array
+                    ? hs : default;
+            if (headers.ValueKind != JsonValueKind.Array)
+                throw new InvalidOperationException("Malformed inbox message; review before sending.");
+            string Header(string name) => headers.EnumerateArray()
+                .Where(h => h.ValueKind == JsonValueKind.Object &&
+                    h.TryGetProperty("name", out var n) &&
+                    n.ValueKind == JsonValueKind.String &&
+                    n.GetString()?.Equals(name, StringComparison.OrdinalIgnoreCase) == true &&
+                    h.TryGetProperty("value", out var v) && v.ValueKind == JsonValueKind.String)
+                .Select(h => h.GetProperty("value").GetString() ?? "").FirstOrDefault() ?? "";
+            var from = Header("From").ToLowerInvariant();
+            var subject = Header("Subject").ToLowerInvariant();
+            if (from.Contains("mailer-daemon") || from.Contains("postmaster") ||
+                subject.Contains("undeliverable") || subject.Contains("delivery status notification") ||
+                subject.Contains("complaint") || subject.Contains("returned mail"))
+                throw new InvalidOperationException("Possible bounce or complaint in Gmail; manual review required.");
+
+            var thread = root.TryGetProperty("threadId", out var threadElement) &&
+                threadElement.ValueKind == JsonValueKind.String ? threadElement.GetString() : null;
+            if (thread is null || !anchors.TryGetValue(thread, out var anchor)) continue;
+            var reply = GmailReplyCorrelation.Match(id, root, anchor);
+            if (reply is null || string.IsNullOrWhiteSpace(reply.Body))
+                throw new InvalidOperationException("Ambiguous incoming message in an active Gmail thread. Stop and review.");
+            found.Add(reply);
+        }
+        return found;
+    }
+
 }

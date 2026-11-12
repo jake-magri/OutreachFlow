@@ -15,6 +15,8 @@ public interface IGmailSender
     Task<string> PrepareAsync(int workspaceId, string sender, CancellationToken ct);
     Task<GmailDelivery> SendAsync(string token, OutboundDispatch dispatch, CancellationToken ct);
     Task<GmailDelivery?> FindSentAsync(int workspaceId, OutboundDispatch dispatch, CancellationToken ct);
+    Task<GmailDelivery> SendFollowupAsync(string token, FollowupJob job, CancellationToken ct) =>
+        throw new NotSupportedException("This provider does not support scheduled follow-up dispatch.");
 }
 
 public sealed partial class GmailMailboxService : IGmailSender
@@ -75,6 +77,45 @@ public sealed partial class GmailMailboxService : IGmailSender
         response.EnsureSuccessStatusCode();
         using var json = await BoundedJsonAsync(response, ct);
         return Delivery(json.RootElement);
+    }
+
+    public static string FollowupMime(FollowupJob job)
+    {
+        if (job.Kind != "Email" || string.IsNullOrWhiteSpace(job.ThreadId) ||
+            string.IsNullOrWhiteSpace(job.ReplyToMessageId) ||
+            !job.ReplyToMessageId.StartsWith('<') || !job.ReplyToMessageId.EndsWith('>') ||
+            string.IsNullOrWhiteSpace(job.RfcMessageId) ||
+            !job.RfcMessageId.StartsWith('<') || !job.RfcMessageId.EndsWith('>') ||
+            job.Subject.Any(char.IsControl) ||
+            job.From.Any(char.IsControl) || job.To.Any(char.IsControl))
+            throw new InvalidOperationException("Invalid immutable Gmail follow-up headers.");
+        var d = new OutboundDispatch {
+            From = job.From, To = job.To, Subject = job.Subject,
+            Body = job.Body, RfcMessageId = job.RfcMessageId,
+            ApprovedUtc = job.AttemptedUtc ?? job.ApprovedUtc
+        };
+        return Mime(d).Replace("MIME-Version: 1.0\r\n",
+            $"In-Reply-To: {job.ReplyToMessageId}\r\nReferences: {job.ReplyToMessageId}\r\nMIME-Version: 1.0\r\n");
+    }
+
+    public async Task<GmailDelivery> SendFollowupAsync(string token, FollowupJob job, CancellationToken ct)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, GmailEndpoint + "messages/send");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        request.Content = JsonContent.Create(new {
+            raw = Base64Url(Encoding.UTF8.GetBytes(FollowupMime(job))),
+            threadId = job.ThreadId
+        });
+        using var response = await clients.CreateClient("GmailApi")
+            .SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
+        if ((int)response.StatusCode is >= 400 and < 500 && (int)response.StatusCode != 408)
+            throw new GmailRejectedException((int)response.StatusCode);
+        response.EnsureSuccessStatusCode();
+        using var json = await BoundedJsonAsync(response, ct);
+        var delivered = Delivery(json.RootElement);
+        if (!delivered.ThreadId.Equals(job.ThreadId, StringComparison.Ordinal))
+            throw new InvalidOperationException("Gmail returned a different thread. Hold for reconciliation.");
+        return delivered;
     }
 
     private static GmailDelivery Delivery(JsonElement message)

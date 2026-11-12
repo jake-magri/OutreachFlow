@@ -17,7 +17,7 @@ OutreachFlow is a .NET 10 Blazor Server interactive web app using EF Core, ASP.N
 
 OutreachFlow is **research-first, not a bulk email or autonomous sales agent**. Its new batch pilot is user-triggered, capped at three rows and requires an explicit per-batch owner attestation for real sends; it does not automatically verify official company processes or run scheduled follow-ups. A search hit, public email address or unofficial link is never treated as a verified invitation to send. Once issue #13's branch is accepted, Gmail candidate matching will require a unique provider-confirmed outbound thread, reply references, the expected recipient and sender address. These signals support conversation correlation but cannot authenticate the human sender or prove contractual interest. Always review the message in Gmail and manually confirm relevance before importing it.
 
-**Not yet implemented:** scheduled follow-up dispatch/retries, unattended reply polling, bounce/complaint handling, buyer-first account discovery (issue #10), production operational recovery, account recovery, cloud hosting or billing. Local migration/recovery tools, provider identity and a **manually approved first Gmail send** are implemented and locally accepted. Offline provider-failure tests are not substitutes for real-world reliability evidence.
+**Not yet implemented:** production-grade Gmail history synchronization, reliable bounce/complaint classification, buyer-first account discovery (issue #10), production operational recovery, account recovery, cloud hosting or billing. Local migration/recovery tools, provider identity and a **manually approved first Gmail send** are implemented and locally accepted. Offline provider-failure tests are not substitutes for real-world reliability evidence.
 
 ## Source layout
 
@@ -83,6 +83,7 @@ The app fails closed outside ASP.NET Core Development and refuses non-loopback r
 - [BROWSER-ACCEPTANCE.md](BROWSER-ACCEPTANCE.md): one-command Playwright acceptance, isolation and CI failure artifacts.
 - [GMAIL-CORRELATION-ACCEPTANCE.md](GMAIL-CORRELATION-ACCEPTANCE.md): offline Gmail payload/thread regressions, provider boundaries and optional real-provider troubleshooting.
 - [BATCH-INQUIRY-PILOT.md](BATCH-INQUIRY-PILOT.md): one-input simulation and owner-approved live Gmail batch, limits and automated acceptance.
+- [SCHEDULED-GMAIL-PILOT.md](SCHEDULED-GMAIL-PILOT.md): opt-in, local scheduled follow-ups, inbox safety checks, pause/resume/cancel and limitations.
 - [MAILBOX-PILOT.md](MAILBOX-PILOT.md): historical Google OAuth and read-only mailbox pilot; [GMAIL-SENDING-PILOT.md](GMAIL-SENDING-PILOT.md) documents the now-accepted one-message sending pilot.
 - [RECOVERY-PLAYBOOK.md](RECOVERY-PLAYBOOK.md): local backup, integrity verification and restore-to-new-directory procedures.
 - [MIGRATION-BASELINE.md](MIGRATION-BASELINE.md): generated EF migrations, schema inspection and optional backed-up adoption.

@@ -13,6 +13,7 @@ public sealed class OutreachDbContext(DbContextOptions<OutreachDbContext> option
     public DbSet<ProviderMessage> ProviderMessages => Set<ProviderMessage>();
 
     public DbSet<OutboundDispatch> OutboundDispatches => Set<OutboundDispatch>();
+    public DbSet<FollowupJob> FollowupJobs => Set<FollowupJob>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -45,6 +46,19 @@ public sealed class OutreachDbContext(DbContextOptions<OutreachDbContext> option
             .HasPrincipalKey(p => new { p.WorkspaceId, p.Id }).OnDelete(DeleteBehavior.Restrict);
         dispatch.ToTable(t => t.HasCheckConstraint("CK_OutboundDispatch_State",
             "\"State\" IN ('Sending','Sent','Uncertain','Rejected')"));
+        var followup = modelBuilder.Entity<FollowupJob>();
+        followup.HasIndex(j => new { j.WorkspaceId, j.ProspectId, j.Step }).IsUnique();
+        followup.HasIndex(j => new { j.State, j.DueUtc });
+        followup.HasIndex(j => j.RfcMessageId).IsUnique();
+        followup.Property(j => j.From).UseCollation("NOCASE");
+        followup.HasOne<Prospect>().WithMany()
+            .HasForeignKey(j => new { j.WorkspaceId, j.ProspectId })
+            .HasPrincipalKey(p => new { p.WorkspaceId, p.Id })
+            .OnDelete(DeleteBehavior.Restrict);
+        followup.ToTable(t => t.HasCheckConstraint("CK_FollowupJob_State",
+            "\"State\" IN ('Queued','Sending','Sent','Held','Uncertain','Cancelled')"));
+        followup.ToTable(t => t.HasCheckConstraint("CK_FollowupJob_Kind",
+            "\"Kind\" IN ('Email','ManualHandoff') AND \"Step\" BETWEEN 1 AND 3"));
         base.OnModelCreating(modelBuilder);
     }
 }

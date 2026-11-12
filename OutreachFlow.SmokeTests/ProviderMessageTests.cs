@@ -41,7 +41,7 @@ internal static class ProviderMessageTests
                 secondId = second.Id;
                 var acceptedAt = DateTime.UtcNow.AddMinutes(-1);
                 var firstOutbound = new OutreachMessage { ProspectId = firstId, IsSimulation = false,
-                    Direction = "Outbound", OccurredUtc = acceptedAt };
+                    Direction = "Outbound", Classification = "Gmail accepted", OccurredUtc = acceptedAt };
                 db.Messages.AddRange(firstOutbound,
                     new OutreachMessage { ProspectId = secondId, IsSimulation = false,
                         Direction = "Outbound", OccurredUtc = acceptedAt });

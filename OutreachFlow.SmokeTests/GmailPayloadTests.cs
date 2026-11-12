@@ -34,13 +34,39 @@ internal static class GmailPayloadTests
                 prospectId = prospect.Id;
                 var sentAt = DateTime.UtcNow.AddMinutes(-5);
                 var message = new OutreachMessage { ProspectId = prospectId, IsSimulation = false,
-                    Direction = "Outbound", OccurredUtc = sentAt };
+                    Direction = "Outbound", Classification = "Gmail accepted", OccurredUtc = sentAt };
                 db.OutboundDispatches.Add(new OutboundDispatch { ProspectId = prospectId, WorkspaceId = workspaceId,
                     State = "Sent", From = "owner@example.org", To = prospect.ContactEmail,
                     RfcMessageId = "<fixture-outbound@example.org>", ApprovedUtc = sentAt });
                 db.ProviderMessages.Add(new ProviderMessage { ProspectId = prospectId, WorkspaceId = workspaceId,
                     Message = message, MailboxEmail = "owner@example.org",
                     MessageId = "sent-fixture", ThreadId = "thread-fixture" });
+                db.FollowupJobs.Add(new FollowupJob {
+                    WorkspaceId = workspaceId, ProspectId = prospectId, Step = 1, Kind = "Email",
+                    State = "Sent", DueUtc = DateTime.UtcNow.AddDays(-1),
+                    From = "owner@example.org", To = "contact@example.org",
+                    Subject = "Fixture", Body = "Fixture", ThreadId = "thread-fixture",
+                    ReplyToMessageId = "<fixture-outbound@example.org>",
+                    RfcMessageId = "<fixture-followup@example.org>"
+                });
+                db.FollowupJobs.Add(new FollowupJob {
+                    WorkspaceId = workspaceId, ProspectId = prospectId, Step = 2, Kind = "Email",
+                    State = "Queued", DueUtc = DateTime.UtcNow.AddDays(1),
+                    From = "owner@example.org", To = "contact@example.org",
+                    Subject = "Fixture", Body = "Fixture", ThreadId = "thread-fixture",
+                    ReplyToMessageId = "<fixture-followup@example.org>",
+                    RfcMessageId = "<fixture-followup-2@example.org>"
+                });
+                db.ProviderMessages.Add(new ProviderMessage {
+                    WorkspaceId = workspaceId, ProspectId = prospectId,
+                    Message = new OutreachMessage {
+                        ProspectId = prospectId, Direction = "Outbound",
+                        IsSimulation = false, Classification = "Gmail follow-up accepted",
+                        OccurredUtc = DateTime.UtcNow.AddMinutes(-2)
+                    },
+                    MailboxEmail = "owner@example.org", MessageId = "followup-fixture",
+                    ThreadId = "thread-fixture"
+                });
                 await db.SaveChangesAsync();
             }
             var store = new GmailConnectionStore(Path.Combine(temp, "connections"),
@@ -51,6 +77,8 @@ internal static class GmailPayloadTests
 
             Check((await gmail.ReviewInboxAsync(workspaceId, factory)).Single().Body == "Genuine fixture text",
                 "bounded read path includes valid provider-confirmed replies");
+            Check((await gmail.ScanAutomationAsync(workspaceId, factory)).Single().ProspectId == prospectId,
+                "automatic scan accepts replies to a sent follow-up without confusing the original thread anchor");
 
             transport.Mode = ResponseMode.InvalidHeader;
             Check((await gmail.ReviewInboxAsync(workspaceId, factory)).Count == 0,
@@ -58,6 +86,8 @@ internal static class GmailPayloadTests
             transport.Mode = ResponseMode.WrongReference;
             Check((await gmail.ReviewInboxAsync(workspaceId, factory)).Count == 0,
                 "unrelated reply reference is not correlated");
+            await RejectAsync(() => gmail.ScanAutomationAsync(workspaceId, factory),
+                "ambiguous replies stop automated sending instead of passing silently");
             transport.Mode = ResponseMode.BadBase64;
             Check((await gmail.ReviewInboxAsync(workspaceId, factory)).Single().Body == "",
                 "invalid base64 is not presented as genuine text");
@@ -180,7 +210,7 @@ internal static class GmailPayloadTests
                     ? new { name = "To", value = new { broken = true } }
                     : new { name = "To", value = (object)"owner@example.org" },
                 new { name = "In-Reply-To", value = (object)(owner.Mode == ResponseMode.WrongReference
-                    ? "<not-our-message@example.org>" : "<fixture-outbound@example.org>") }
+                    ? "<not-our-message@example.org>" : "<fixture-followup@example.org>") }
             ];
             object payload = owner.Mode switch
             {

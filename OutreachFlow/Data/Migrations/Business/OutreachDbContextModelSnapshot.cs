@@ -44,6 +44,41 @@ namespace OutreachFlow.Data.Migrations.Business
                     b.ToTable("Activities");
                 });
 
+            modelBuilder.Entity("OutreachFlow.Models.FollowupJob", b =>
+                {
+                    b.Property<int>("Id").ValueGeneratedOnAdd().HasColumnType("INTEGER");
+                    b.Property<DateTime>("ApprovedUtc").HasColumnType("TEXT");
+                    b.Property<string>("ApprovedByUserId").IsRequired().HasColumnType("TEXT");
+                    b.Property<DateTime?>("AttemptedUtc").HasColumnType("TEXT");
+                    b.Property<string>("Body").IsRequired().HasColumnType("TEXT");
+                    b.Property<DateTime?>("CompletedUtc").HasColumnType("TEXT");
+                    b.Property<DateTime>("DueUtc").HasColumnType("TEXT");
+                    b.Property<string>("From").IsRequired().HasColumnType("TEXT").UseCollation("NOCASE");
+                    b.Property<string>("GmailMessageId").IsRequired().HasColumnType("TEXT");
+                    b.Property<string>("Kind").IsRequired().HasColumnType("TEXT");
+                    b.Property<int>("ProspectId").HasColumnType("INTEGER");
+                    b.Property<string>("ReplyToMessageId").IsRequired().HasColumnType("TEXT");
+                    b.Property<string>("Result").IsRequired().HasColumnType("TEXT");
+                    b.Property<string>("RfcMessageId").IsRequired().HasColumnType("TEXT");
+                    b.Property<string>("State").IsRequired().HasColumnType("TEXT");
+                    b.Property<int>("Step").HasColumnType("INTEGER");
+                    b.Property<string>("Subject").IsRequired().HasColumnType("TEXT");
+                    b.Property<string>("ThreadId").IsRequired().HasColumnType("TEXT");
+                    b.Property<string>("To").IsRequired().HasColumnType("TEXT");
+                    b.Property<int>("WorkspaceId").HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+                    b.HasIndex("RfcMessageId").IsUnique();
+                    b.HasIndex("State", "DueUtc");
+                    b.HasIndex("WorkspaceId", "ProspectId", "Step").IsUnique();
+
+                    b.ToTable("FollowupJobs", t =>
+                        {
+                            t.HasCheckConstraint("CK_FollowupJob_State", "\"State\" IN ('Queued','Sending','Sent','Held','Uncertain','Cancelled')");
+                            t.HasCheckConstraint("CK_FollowupJob_Kind", "\"Kind\" IN ('Email','ManualHandoff') AND \"Step\" BETWEEN 1 AND 3");
+                        });
+                });
+
             modelBuilder.Entity("OutreachFlow.Models.OutboundDispatch", b =>
                 {
                     b.Property<int>("Id")
@@ -428,6 +463,16 @@ namespace OutreachFlow.Data.Migrations.Business
                 });
 
             modelBuilder.Entity("OutreachFlow.Models.OutboundDispatch", b =>
+                {
+                    b.HasOne("OutreachFlow.Models.Prospect", null)
+                        .WithMany()
+                        .HasForeignKey("WorkspaceId", "ProspectId")
+                        .HasPrincipalKey("WorkspaceId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("OutreachFlow.Models.FollowupJob", b =>
                 {
                     b.HasOne("OutreachFlow.Models.Prospect", null)
                         .WithMany()
