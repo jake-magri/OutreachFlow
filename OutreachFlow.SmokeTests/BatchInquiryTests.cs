@@ -103,7 +103,7 @@ internal static class BatchInquiryTests
                 "Injected | Site | http://localhost | other@example.org",
                 BatchInquiryMode.Simulated, false), "non-HTTPS company input is rejected");
         }
-        finally { Directory.Delete(folder, true); }
+        finally { await TestDataCleanup.DirectoryAsync(folder); }
     }
 
     private static ClaimsPrincipal Principal(string id) =>
