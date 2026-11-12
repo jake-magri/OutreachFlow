@@ -108,6 +108,10 @@ builder.Services.AddScoped<GmailMailboxService>();
 builder.Services.AddScoped<IGmailSender>(sp => sp.GetRequiredService<GmailMailboxService>());
 builder.Services.AddScoped<ApprovedSendService>();
 builder.Services.AddScoped<BatchInquiryService>();
+builder.Services.AddScoped<IAutomationInbox, GmailAutomationInbox>();
+builder.Services.AddScoped<FollowupAutomationService>();
+// Opt-in only; the worker immediately exits unless Followups:Enabled is true.
+builder.Services.AddHostedService<FollowupWorker>();
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddScoped<OpportunityDiscoveryService>();
 builder.Services.AddScoped<OutreachService>();
