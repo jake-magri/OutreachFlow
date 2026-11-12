@@ -147,6 +147,31 @@ internal static class FollowupAutomationTests
             var before = gmail.Sends;
             await service.TickAsync();
             Check(gmail.Sends == before, "uncertain sends are never replayed");
+            var uncertainId = (await service.ListAsync(owner, unsafeProspect))[0].Id;
+            await Reject(() => service.ReconcileAsync(owner, unsafeProspect, uncertainId),
+                "absence of exact Gmail Sent match cannot authorize a retry");
+            gmail.Found = new GmailDelivery("confirmed-followup", "thread-" + unsafeProspect);
+            await service.ReconcileAsync(owner, unsafeProspect, uncertainId);
+            var recovered = await service.ListAsync(owner, unsafeProspect);
+            Check(recovered[0].State == "Sent" && recovered[1].State == "Held" &&
+                gmail.Sends == before, "confirmed Sent match reconciles without resending and holds next step");
+            gmail.Found = null;
+
+            var blockedProspect = await NewProspect("Sequence D");
+            await service.ApproveAsync(owner, blockedProspect,
+                (await service.PreviewAsync(owner, blockedProspect)).Hash);
+            await using (var db = business.CreateDbContext())
+            {
+                var p = await db.Prospects.FindAsync(blockedProspect);
+                p!.Status = ProspectStatus.Suppressed;
+                await db.SaveChangesAsync();
+            }
+            clock.UtcNow = new DateTimeOffset(
+                (await service.ListAsync(owner, blockedProspect))[0].DueUtc.AddMinutes(1),
+                TimeSpan.Zero);
+            await service.TickAsync();
+            Check((await service.ListAsync(owner, blockedProspect))[0].State == "Cancelled" &&
+                gmail.Sends == before, "suppressed prospect cannot dispatch a queued follow-up");
         }
         finally { await TestDataCleanup.DirectoryAsync(root); }
     }
@@ -206,12 +231,13 @@ internal static class FollowupAutomationTests
         public bool FailUnknown { get; set; }
         public int Sends;
         public List<string> ThreadIds = [];
+        public GmailDelivery? Found { get; set; }
         public Task<string> PrepareAsync(int workspaceId, string sender, CancellationToken ct) =>
             Task.FromResult("fixture-access-token");
         public Task<GmailDelivery> SendAsync(string token, OutboundDispatch d, CancellationToken ct) =>
             throw new NotSupportedException();
         public Task<GmailDelivery?> FindSentAsync(int workspaceId, OutboundDispatch d, CancellationToken ct) =>
-            Task.FromResult<GmailDelivery?>(null);
+            Task.FromResult(Found);
         public Task<GmailDelivery> SendFollowupAsync(string token, FollowupJob job, CancellationToken ct)
         {
             if (FailUnknown) throw new TaskCanceledException("unknown Gmail result");
