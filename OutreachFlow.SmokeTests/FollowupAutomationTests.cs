@@ -127,6 +127,18 @@ internal static class FollowupAutomationTests
             Check(gmail.Sends == 2 &&
                 (await service.ListAsync(owner, replyProspect)).All(j => j.State == "Cancelled"),
                 "detected inbound reply cancels future steps before any send");
+            int detectedId;
+            await using (var db = business.CreateDbContext())
+                detectedId = await db.Messages.Where(m => m.ProspectId == replyProspect &&
+                    m.Classification == "Gmail auto-detected: Unclassified").Select(m => m.Id).SingleAsync();
+            await service.ClassifyDetectedReplyAsync(owner, replyProspect, detectedId, ReplyCategory.Declined);
+            await using (var db = business.CreateDbContext())
+                Check((await db.Prospects.FindAsync(replyProspect))!.Status == ProspectStatus.Suppressed &&
+                    (await db.Messages.FindAsync(detectedId))!.Classification == "Gmail reviewed: Declined",
+                    "owner classification updates the existing inbound without duplicate Gmail imports");
+            await Reject(() => service.ClassifyDetectedReplyAsync(owner, replyProspect,
+                detectedId, ReplyCategory.Interested),
+                "already-classified reply cannot be silently reclassified as interested");
             inbox.Reply = null;
 
             var unsafeProspect = await NewProspect("Sequence C");
@@ -237,7 +249,8 @@ internal static class FollowupAutomationTests
             var p = await db.Prospects.SingleAsync(p => p.WorkspaceId == workspaceId && p.Id == prospectId, ct);
             p.AutomationPaused = true; p.Status = ProspectStatus.NeedsAction;
             db.Messages.Add(new OutreachMessage { ProspectId = p.Id, Direction = "Inbound",
-                Body = "Unread fixture reply", IsSimulation = false });
+                Body = "Unread fixture reply", IsSimulation = false,
+                Classification = "Gmail auto-detected: Unclassified" });
             await db.SaveChangesAsync(ct);
             return true;
         }
