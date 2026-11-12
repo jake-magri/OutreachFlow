@@ -23,7 +23,7 @@ internal static class TestDataCleanup
         SqliteConnection.ClearAllPools();
         await RetryAsync(() =>
         {
-            foreach (var suffix in new[] { "", "-wal", "-shm" })
+            foreach (var suffix in new[] { "", "-wal", "-shm", "-journal" })
                 if (File.Exists(path + suffix)) File.Delete(path + suffix);
         }, path);
     }
