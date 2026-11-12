@@ -209,6 +209,50 @@ public sealed class FollowupAutomationService(
         await CompleteAsync(jobId, found, ct);
     }
 
+    public async Task ClassifyDetectedReplyAsync(ClaimsPrincipal user, int prospectId,
+        int messageId, ReplyCategory category, CancellationToken ct = default)
+    {
+        if (!Enum.IsDefined(category)) throw new InvalidOperationException("Unknown reply category.");
+        var workspace = await OwnerAsync(user, ct);
+        await using var db = await factory.CreateDbContextAsync(ct);
+        await db.Database.OpenConnectionAsync(ct);
+        using var reservation = ((SqliteConnection)db.Database.GetDbConnection()).BeginTransaction(deferred: false);
+        await using var tx = await db.Database.UseTransactionAsync(reservation, ct);
+        var p = await db.Prospects.SingleAsync(p => p.Id == prospectId && p.WorkspaceId == workspace, ct);
+        if (p.Status != ProspectStatus.NeedsAction)
+            throw new InvalidOperationException("Only an open, unclassified detected reply can be classified.");
+        var message = await db.Messages.SingleAsync(m => m.Id == messageId &&
+            m.ProspectId == prospectId && m.Direction == "Inbound" && !m.IsSimulation &&
+            m.Classification == "Gmail auto-detected: Unclassified", ct);
+        message.Classification = "Gmail reviewed: " + category;
+        p.Status = category switch
+        {
+            ReplyCategory.Interested => ProspectStatus.WarmLead,
+            ReplyCategory.ApplicationInstructions => ProspectStatus.ApplicationTask,
+            ReplyCategory.Declined => ProspectStatus.Suppressed,
+            _ => ProspectStatus.NeedsAction
+        };
+        p.AutomationPaused = true;
+        p.NextStepDueUtc = null;
+        p.NextAction = category switch
+        {
+            ReplyCategory.Interested => "Personally follow up with interested contact",
+            ReplyCategory.ApplicationInstructions => "Complete official supplier application",
+            ReplyCategory.Declined => "",
+            _ => "Manually review the reply and decide next step"
+        };
+        foreach (var queued in await db.FollowupJobs.Where(j => j.ProspectId == prospectId &&
+            j.WorkspaceId == workspace && j.State == "Queued").ToListAsync(ct))
+        {
+            queued.State = "Cancelled";
+            queued.Result = "Owner classified incoming Gmail reply";
+        }
+        db.Activities.Add(new() { ProspectId = p.Id, Kind = "Detected Gmail reply classified",
+            Detail = "Owner classified existing inbound message #" + messageId + " as " + category });
+        await db.SaveChangesAsync(ct);
+        await reservation.CommitAsync(ct);
+    }
+
     public async Task ControlAsync(ClaimsPrincipal user, int prospectId, string action, CancellationToken ct = default)
     {
         if (action is not ("pause" or "resume" or "cancel"))
