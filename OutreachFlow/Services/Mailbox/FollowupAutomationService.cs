@@ -554,8 +554,12 @@ public sealed class FollowupAutomationService(
         p.Attempts++;
         // A reply or manual takeover can happen while Gmail accepts a reserved
         // message. Record Gmail acceptance but never reopen pending follow-ups.
+        // Uncertain delivery intentionally pauses the prospect until the
+        // owner reconciles it. That pause is not itself an inbound reply:
+        // reconciliation must retain the next step as Held, never Queued.
         var interrupted = p.Status != ProspectStatus.AwaitingReply ||
-            p.AutomationPaused || !await NoInboundAsync(db, p.Id, ct);
+            !await NoInboundAsync(db, p.Id, ct) ||
+            (p.AutomationPaused && !reconciled);
         if (interrupted)
         {
             foreach (var pending in await db.FollowupJobs.Where(x =>
