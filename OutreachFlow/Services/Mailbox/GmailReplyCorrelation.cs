@@ -5,7 +5,7 @@ namespace OutreachFlow.Services.Mailbox;
 
 /// <summary>A provider-confirmed outbound inquiry belonging to exactly one workspace/prospect.</summary>
 public sealed record GmailSentAnchor(int ProspectId, string CompanyName, string ContactEmail,
-    string MailboxEmail, string ThreadId, string RfcMessageId, DateTime ApprovedUtc);
+    string MailboxEmail, string ThreadId, string RfcMessageId, DateTime ApprovedUtc, IReadOnlyList<string>? FollowupMessageIds = null);
 
 /// <summary>
 /// Conservative Gmail-thread evidence for owner-reviewed inbound messages.
@@ -38,8 +38,8 @@ public static class GmailReplyCorrelation
 
         if (!ContainsRecipient(to, anchor.MailboxEmail) && !ContainsRecipient(cc, anchor.MailboxEmail))
             return null;
-        if (!ContainsExactId(replyTo, anchor.RfcMessageId) &&
-            !ContainsExactId(references, anchor.RfcMessageId))
+        if (!new[] { anchor.RfcMessageId }.Concat(anchor.FollowupMessageIds ?? [])
+                .Any(id => ContainsExactId(replyTo, id) || ContainsExactId(references, id)))
             return null;
 
         var parsed = GmailMailboxService.ParseInbound(id, message, anchor.ProspectId,
