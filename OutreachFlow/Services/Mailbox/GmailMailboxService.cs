@@ -475,6 +475,7 @@ public sealed partial class GmailMailboxService(IConfiguration config, IHttpClie
                               m.WorkspaceId == workspaceId && d.State == "Sent" &&
                               m.Provider == "gmail" && m.MailboxEmail == mailbox &&
                               history.Direction == "Outbound" && !history.IsSimulation &&
+                              history.Classification == "Gmail accepted" &&
                               p.Status != ProspectStatus.Closed && p.Status != ProspectStatus.Suppressed
                           select new { d, p, m }).ToListAsync(ct);
         var sentFollowups = await db.FollowupJobs.AsNoTracking()
