@@ -103,7 +103,7 @@ internal static class GmailPayloadTests
                     (await db.Prospects.FindAsync(prospectId))!.Status == ProspectStatus.WarmLead,
                     "invalid payload attempts did not change prospect state before valid import");
         }
-        finally { Directory.Delete(temp, recursive: true); }
+        finally { await TestDataCleanup.DirectoryAsync(temp); }
     }
 
     private static async Task RejectAsync(Func<Task> action, string scenario)

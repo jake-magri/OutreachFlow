@@ -107,6 +107,7 @@ builder.Services.AddHttpClient("GmailApi", client => client.Timeout = TimeSpan.F
 builder.Services.AddScoped<GmailMailboxService>();
 builder.Services.AddScoped<IGmailSender>(sp => sp.GetRequiredService<GmailMailboxService>());
 builder.Services.AddScoped<ApprovedSendService>();
+builder.Services.AddScoped<BatchInquiryService>();
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddScoped<OpportunityDiscoveryService>();
 builder.Services.AddScoped<OutreachService>();

@@ -265,8 +265,8 @@ public sealed partial class GmailMailboxService(IConfiguration config, IHttpClie
             payload.ValueKind != JsonValueKind.Object ||
             !payload.TryGetProperty("headers", out var headers) ||
             headers.ValueKind != JsonValueKind.Array || headers.GetArrayLength() > 100) return null;
-        // Reject malformed header shapes rather than allowing a single invalid
-        // provider field to fail the whole bounded inbox review.
+        // Fail closed for malformed Gmail header shapes without treating the
+        // entire inbox scan as an exception.
         foreach (var header in headers.EnumerateArray())
             if (header.ValueKind != JsonValueKind.Object ||
                 !header.TryGetProperty("name", out var name) ||

@@ -1,6 +1,6 @@
 # Gmail correlation and payload acceptance — issue #13
 
-This checklist separates **repeatable offline gates** from the one remaining real-Gmail observation. It is not an invitation to send production outreach or weaken the verified-thread policy.
+This checklist separates **repeatable offline gates** from optional troubleshooting with a real Gmail account. The owner has already completed controlled real Gmail send/reply acceptance in earlier work; no additional manual click-through is necessary to merge this regression-test change. It is not an invitation to send production outreach or weaken the verified-thread policy.
 
 ## Automated gates on every PR
 
@@ -10,9 +10,9 @@ Run `dotnet run --project OutreachFlow.SmokeTests -c Release` after a Release bu
 
 The fake provider is deterministic: all test email addresses use `example.org`, no credentials or real Google account are used, and no message is transmitted. All initial sends remain owner-approved and disabled by default.
 
-## Final one-time read-only Windows observation
+## Optional real-Gmail troubleshooting (only if a new problem arises)
 
-This step is **not yet accepted**. It needs the owner's connected Windows Gmail mailbox and a real, controlled reply in a previously confirmed sent conversation. Do not create a second prospect or send another initial inquiry just to make this test pass.
+The procedure below is available if strict threading behavior differs with a real provider. It is **not a merge gate for PR #31** and should not be repeated without an actual regression. It needs the owner's connected Windows Gmail mailbox and a controlled reply in an existing conversation. Never create a second prospect or send another initial inquiry merely to run the test.
 
 1. Pull the candidate branch after passing CI, stop the application, and preserve a verified backup before testing against existing local data. No schema migration is included here.
 2. Keep `Gmail:EnableSending=false`; start the app with the previously authorized Gmail account. Do not alter existing provider records.
@@ -23,10 +23,9 @@ This step is **not yet accepted**. It needs the owner's connected Windows Gmail 
 
 Record date, test inbox (redacted), expected prospect ID, observed behavior and CI run link in issue #13. Do not commit real message content, OAuth tokens, screenshots of private mail or real customer data.
 
-## Remaining issue gates
+## Remaining product gates
 
-- Real Google read-only acceptance above.
-- Any further genuine-provider malformed/alias/forwarded cases discovered by observation.
-- No automatic reply classification or follow-ups until issue #13 is accepted and issue #15 introduces separately verified scheduling and suppression gates.
+- Track any concrete provider-specific threading/alias/forwarding regressions if observed.
+- No automatic reply classification or unattended follow-ups until separately verified scheduling and suppression gates in issue #15 are satisfied.
 
-Issue #13 is not complete merely because deterministic tests pass. Keep the issue open until the real observation is recorded.
+The existing controlled Gmail send/reply acceptance is recorded in the project history. Future external-provider verification should be evidence-driven, not repetitive.
