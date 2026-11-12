@@ -353,8 +353,11 @@ public sealed partial class GmailMailboxService(IConfiguration config, IHttpClie
     /// </summary>
     public async Task<bool> ImportReviewedInboundAsync(int workspaceId, int prospectId,
         string messageId, ReplyCategory category,
-        IDbContextFactory<OutreachDbContext> factory, CancellationToken ct = default)
+        IDbContextFactory<OutreachDbContext> factory, CancellationToken ct = default,
+        bool detectedAutomatically = false)
     {
+        if (detectedAutomatically && category != ReplyCategory.Unclear)
+            throw new InvalidOperationException("Automatic inbox detection may not classify the reply.");
         if (messageId.Length is < 1 or > 100 || !messageId.All(c =>
                 char.IsAsciiLetterOrDigit(c) || c is '-' or '_'))
             throw new InvalidOperationException("Invalid Gmail message identifier.");
@@ -414,7 +417,8 @@ public sealed partial class GmailMailboxService(IConfiguration config, IHttpClie
         var importedMessage = new OutreachMessage
         {
             ProspectId = prospectId, Direction = "Inbound",
-            Classification = "Gmail reviewed: " + category,
+            Classification = detectedAutomatically
+                ? "Gmail auto-detected: Unclassified" : "Gmail reviewed: " + category,
             Subject = item.Subject, Body = item.Body,
             IsSimulation = false, OccurredUtc = item.ReceivedUtc
         };
