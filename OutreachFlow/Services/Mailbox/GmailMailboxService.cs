@@ -442,6 +442,12 @@ public sealed partial class GmailMailboxService(IConfiguration config, IHttpClie
         };
         prospect.AutomationPaused = true;
         prospect.NextStepDueUtc = null;
+        foreach (var pending in await db.FollowupJobs.Where(j => j.WorkspaceId == workspaceId &&
+            j.ProspectId == prospectId && (j.State == "Queued" || j.State == "Held")).ToListAsync(ct))
+        {
+            pending.State = "Cancelled";
+            pending.Result = "Gmail reply recorded";
+        }
         prospect.NextAction = category switch
         {
             ReplyCategory.Interested => "Personally follow up with interested contact",
