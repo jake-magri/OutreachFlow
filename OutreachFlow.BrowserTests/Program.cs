@@ -90,6 +90,10 @@ try
         await Visible(batch.GetByText("Automated Fixture Company:", new() { Exact = false }));
         await batch.GetByRole(AriaRole.Link, new() { Name = "View history" }).ClickAsync();
         await Visible(page.GetByText("SIMULATED OUTBOUND", new() { Exact = false }));
+        await Visible(page.GetByTestId("followup-schedule"));
+        await Check(await page.GetByTestId("followup-schedule")
+            .GetByRole(AriaRole.Button, new() { Name = "Review proposed follow-up sequence" }).CountAsync() == 0,
+            "simulated sends cannot authorize a live scheduled sequence.");
         await page.GotoAsync(url + "/prospects");
         batch = page.GetByTestId("batch-inquiries");
         await batch.GetByRole(AriaRole.Textbox, new() { Name = "Batch prospect import string" }).FillAsync(fixture);
