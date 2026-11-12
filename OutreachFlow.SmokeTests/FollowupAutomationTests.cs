@@ -57,7 +57,7 @@ internal static class FollowupAutomationTests
                 db.Prospects.Add(p);
                 await db.SaveChangesAsync();
                 var outbound = new OutreachMessage { ProspectId = p.Id, Direction = "Outbound",
-                    IsSimulation = false, Subject = "Inquiry", Body = "Original",
+                    IsSimulation = false, Classification = "Gmail accepted", Subject = "Inquiry", Body = "Original",
                     OccurredUtc = clock.GetUtcNow().UtcDateTime.AddDays(-3) };
                 db.OutboundDispatches.Add(new OutboundDispatch { WorkspaceId = 1, ProspectId = p.Id,
                     From = "owner@example.org", To = p.ContactEmail, Subject = "Inquiry",
